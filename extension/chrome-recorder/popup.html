@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OtoFlow Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="logo">OF</div>
+        <div>
+          <h1>OtoFlow Recorder</h1>
+          <p>Dış web uygulamasını kaydet</p>
+        </div>
+      </header>
+
+      <label>
+        API adresi
+        <input id="apiBase" value="http://localhost:4100" />
+      </label>
+
+      <label>
+        Kayıt oturumu ID
+        <input id="sessionId" placeholder="rec_..." />
+      </label>
+
+      <label>
+        Yeni iş adı
+        <input id="title" value="Dış uygulama iş kaydı" />
+      </label>
+
+      <label>
+        Amaç
+        <textarea id="goal">Kullanıcının dış web uygulamasında yaptığı işi tekrar çalıştırılabilir otomasyona çevir.</textarea>
+      </label>
+
+      <div class="actions">
+        <button id="create">Oturum Aç</button>
+        <button id="toggle">Kaydı Başlat</button>
+      </div>
+
+      <p id="status">Hazır.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

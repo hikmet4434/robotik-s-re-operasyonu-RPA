@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  owner
+  admin
+  operator
+  viewer
+  auditor
+}
+
+enum PlanCode {
+  starter
+  pro
+  agency
+}
+
+enum WorkflowStatus {
+  draft
+  published
+  paused
+}
+
+enum JobStatus {
+  queued
+  running
+  waiting_approval
+  succeeded
+  failed
+  cancelled
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+  critical
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  taxNumber   String
+  sector      String
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  workflows   Workflow[]
+  jobs        Job[]
+  approvals   ApprovalTask[]
+  documents   Document[]
+  audit       AuditEvent[]
+}
+
+model User {
+  id          String       @id @default(cuid())
+  name        String
+  email       String       @unique
+  passwordHash String?
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+}
+
+model Plan {
+  code            PlanCode @id
+  name            String
+  monthlyPriceTRY Int
+  workflowLimit   Int
+  monthlyJobLimit Int
+  documentLimit   Int
+  connectorLimit  Int
+}
+
+model ManualSubscription {
+  id               String   @id @default(cuid())
+  organizationId   String
+  planCode         PlanCode
+  status           String
+  renewalNote      String
+  currentPeriodEnd DateTime
+}
+
+model AutomationOpportunity {
+  id             String   @id @default(cuid())
+  organizationId String
+  title          String
+  department     String
+  monthlyVolume  Int
+  minutesPerTask Float
+  errorRisk      Int
+  feasibility    Int
+  roiScore       Int
+  status         String
+  createdAt      DateTime @default(now())
+}
+
+model Workflow {
+  id               String            @id @default(cuid())
+  organizationId   String
+  name             String
+  category         String
+  status           WorkflowStatus
+  trigger          String
+  description      String
+  createdAt        DateTime          @default(now())
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  versions         WorkflowVersion[]
+  jobs             Job[]
+}
+
+model WorkflowVersion {
+  id          String         @id @default(cuid())
+  workflowId  String
+  version     Int
+  steps       WorkflowStep[]
+  publishedAt DateTime?
+  workflow    Workflow       @relation(fields: [workflowId], references: [id])
+}
+
+model WorkflowStep {
+  id                String          @id @default(cuid())
+  workflowVersionId String
+  type              String
+  title             String
+  description       String
+  requiresApproval  Boolean
+  riskLevel         RiskLevel
+  version           WorkflowVersion @relation(fields: [workflowVersionId], references: [id])
+}
+
+model RecordingSession {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  title                 String
+  goal                  String
+  appName               String
+  status                String
+  screenRecordingStatus String
+  eventCount            Int
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  events                RecorderEvent[]
+  drafts                AutomationDraft[]
+}
+
+model RecorderEvent {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  recordingSessionId String
+  ts                 DateTime         @default(now())
+  type               String
+  label              String
+  target             String
+  value              String?
+  appArea            String
+  selectorHint       String?
+  region             Json?
+  session            RecordingSession @relation(fields: [recordingSessionId], references: [id])
+}
+
+model AutomationDraft {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  recordingSessionId String
+  title              String
+  objective          String
+  confidence         Int
+  status             String
+  steps              Json
+  variables          Json
+  approvalGates      Json
+  subAutomations     Json
+  createdAt          DateTime         @default(now())
+  publishedWorkflowId String?
+  session            RecordingSession @relation(fields: [recordingSessionId], references: [id])
+}
+
+model Queue {
+  id             String      @id @default(cuid())
+  organizationId String
+  name           String
+  description    String
+  createdAt      DateTime    @default(now())
+  items          QueueItem[]
+}
+
+model QueueItem {
+  id             String    @id @default(cuid())
+  organizationId String
+  queueId        String
+  workflowId     String
+  status         JobStatus
+  payloadSummary String
+  createdAt      DateTime  @default(now())
+  queue          Queue     @relation(fields: [queueId], references: [id])
+}
+
+model Job {
+  id             String      @id @default(cuid())
+  organizationId String
+  workflowId     String
+  queueItemId    String
+  workerId       String
+  status         JobStatus
+  retryCount     Int
+  maxRetries     Int
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime    @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  workflow       Workflow    @relation(fields: [workflowId], references: [id])
+  logs           JobRunLog[]
+}
+
+model JobRunLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  jobId          String
+  ts             DateTime @default(now())
+  level          String
+  message        String
+  job            Job      @relation(fields: [jobId], references: [id])
+}
+
+model ApprovalTask {
+  id             String         @id @default(cuid())
+  organizationId String
+  jobId          String?
+  documentId     String?
+  title          String
+  summary        String
+  riskLevel      RiskLevel
+  status         ApprovalStatus
+  diff           Json
+  dueAt          DateTime
+  createdAt      DateTime       @default(now())
+  resolvedAt     DateTime?
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+}
+
+model Document {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  type           String
+  status         String
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  fields         ExtractedField[]
+}
+
+model ExtractedField {
+  id         String   @id @default(cuid())
+  documentId String
+  key        String
+  label      String
+  value      String
+  confidence Int
+  verified   Boolean
+  document   Document @relation(fields: [documentId], references: [id])
+}
+
+model ConnectorAccount {
+  id             String   @id @default(cuid())
+  organizationId String
+  type           String
+  name           String
+  status         String
+  secretPreview  String?
+  createdAt      DateTime @default(now())
+}
+
+model CredentialVaultItem {
+  id             String   @id @default(cuid())
+  organizationId String
+  connectorId    String
+  label          String
+  encryptedSecret String
+  createdAt      DateTime @default(now())
+}
+
+model CompliancePolicy {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String
+  enabled        Boolean
+  policyType     String
+  createdAt      DateTime @default(now())
+}
+
+model ConsentRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+  subject        String
+  purpose        String
+  legalBasis     String
+  acceptedAt     DateTime
+}
+
+model RetentionRule {
+  id             String   @id @default(cuid())
+  organizationId String
+  dataType       String
+  retentionDays  Int
+  action         String
+  enabled        Boolean
+}
+
+model AuditEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  ts             DateTime     @default(now())
+  actor          String
+  action         String
+  entityType     String
+  entityId       String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}

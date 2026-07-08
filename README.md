@@ -1,0 +1,55 @@
+# OtoFlow AI RPA
+
+KOBİ odaklı, uyum katmanlı RPA SaaS prototipi.
+
+## Özellikler
+
+- Recorder Studio: kullanıcı işini kaydetme, olayları analiz etme ve workflow taslağı üretme.
+- Chrome Recorder extension: dış web uygulamalarında tıklama, input, form ve URL olaylarını yakalama.
+- Local Agent bridge: masaüstü/ERP işleri için yerel event köprüsü.
+- Workflow, job, queue, approval, doküman işleme, entegrasyon ve KVKK/audit modülleri.
+- E-imza PIN'i, OTP, SMS kodu, banka şifresi ve secret alanlarını saklamama/maskleme politikası.
+
+## Çalıştırma
+
+```bash
+npm install
+npm run dev
+```
+
+Uygulama:
+
+```text
+http://localhost:5173/dashboard
+http://localhost:5173/recorder
+```
+
+API:
+
+```text
+http://localhost:4100/api/health
+```
+
+## Chrome Extension
+
+Chrome'da `chrome://extensions` sayfasını açıp Developer Mode ile şu klasörü `Load unpacked` olarak yükleyin:
+
+```text
+extension/chrome-recorder
+```
+
+## Local Agent
+
+```bash
+cd agents/local-agent
+OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm start
+```
+
+## Prisma/PostgreSQL Hazırlığı
+
+Yerel demo SQLite state store ile çalışır. Canlı PostgreSQL geçişi için Prisma şeması hazırdır:
+
+```bash
+npm run prisma:generate
+npm run prisma:push
+```
