@@ -1,0 +1,19 @@
+services:
+  otoflow-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "4100"
+      SAAS_DATABASE_PATH: /app/data/otoflow-saas.sqlite
+      DATABASE_PATH: /app/data/otoflow.sqlite
+      CREDENTIAL_VAULT_KEY: ${CREDENTIAL_VAULT_KEY:-change-this-production-secret}
+    volumes:
+      - otoflow_data:/app/data
+    expose:
+      - "4100"
+    restart: unless-stopped
+
+volumes:
+  otoflow_data:

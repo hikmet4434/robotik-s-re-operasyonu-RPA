@@ -53,3 +53,18 @@ Yerel demo SQLite state store ile çalışır. Canlı PostgreSQL geçişi için 
 npm run prisma:generate
 npm run prisma:push
 ```
+
+## Coolify
+
+Tek container deploy için:
+
+- Dockerfile: `Dockerfile`
+- Port: `4100`
+- Health path: `/api/health`
+- Domain örneği: `https://seymata.com`
+
+Docker Compose deploy için:
+
+```text
+docker-compose.coolify.yml
+```

@@ -1,5 +1,7 @@
 import cors from "cors";
 import express from "express";
+import path from "node:path";
+import fs from "node:fs";
 import { z } from "zod";
 import type { Actor } from "../shared/types";
 import { calculateTax } from "./tax";
@@ -519,6 +521,14 @@ app.post("/api/files/:id/submit", (_req, res) => {
   file.auditLog.unshift({ ts, actor: "bot", action: "Müşteri bilgilendirme metni üretildi ve iletişim geçmişine kaydedildi." });
   res.json(saveFile(file));
 });
+
+const distDir = path.resolve(process.cwd(), "dist");
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get(/^(?!\/api).*/, (_req, res) => {
+    res.sendFile(path.join(distDir, "index.html"));
+  });
+}
 
 app.listen(port, () => {
   console.log(`OtoFlow AI API listening on http://localhost:${port}`);
