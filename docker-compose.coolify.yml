@@ -8,7 +8,7 @@ services:
       PORT: "4100"
       SAAS_DATABASE_PATH: /app/data/otoflow-saas.sqlite
       DATABASE_PATH: /app/data/otoflow.sqlite
-      CREDENTIAL_VAULT_KEY: ${CREDENTIAL_VAULT_KEY:-change-this-production-secret}
+      CREDENTIAL_VAULT_KEY: ${SERVICE_HEX_64_CREDENTIAL_VAULT_KEY}
     volumes:
       - otoflow_data:/app/data
     expose:
