@@ -45,6 +45,15 @@ cd agents/local-agent
 OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm start
 ```
 
+## Gerçek Doküman Girişi
+
+Dokümanlar sekmesi gerçek dosya yüklemeyi destekler:
+
+- Desteklenen tipler: PDF, PNG, JPG, WEBP, TXT, CSV, JSON.
+- Boyut sınırı: 10MB.
+- TXT/CSV/JSON içeriklerinden taraf, tutar, tarih ve belge no alanları çıkarılır.
+- PDF/görsel dosyalar saklanır ve OCR/AI sağlayıcısı bağlanana kadar insan onayına düşer.
+
 ## Prisma/PostgreSQL Hazırlığı
 
 Yerel demo SQLite state store ile çalışır. Canlı PostgreSQL geçişi için Prisma şeması hazırdır:

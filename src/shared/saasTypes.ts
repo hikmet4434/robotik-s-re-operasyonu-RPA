@@ -251,6 +251,10 @@ export interface DocumentRecord {
   name: string;
   type: "invoice" | "order" | "customs" | "reconciliation" | "other";
   status: "extracted" | "needs_review" | "approved";
+  source?: "demo" | "upload" | "email" | "connector";
+  mimeType?: string;
+  sizeBytes?: number;
+  storedFileName?: string;
   fields: SaasExtractedField[];
   createdAt: string;
 }

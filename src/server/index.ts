@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
   createRecordingSession,
   createQueueItem,
   extractDocument,
+  extractUploadedDocument,
   getCurrentContext,
   getDashboard,
   getWorkflows,
@@ -33,6 +35,35 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT ?? 4100);
+const uploadDir = path.resolve(process.cwd(), "data", "uploads");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const allowedUploadTypes = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv", "application/json"]);
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).slice(0, 12);
+      cb(null, `${Date.now()}-${cryptoSafeName(path.basename(file.originalname, ext))}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (allowedUploadTypes.has(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Desteklenmeyen dosya tipi. PDF, PNG, JPG, WEBP, TXT, CSV veya JSON yükleyin."));
+  }
+});
+
+function cryptoSafeName(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "document";
+}
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -309,6 +340,39 @@ app.post("/api/documents/extract", (req, res) => {
   }
 });
 
+app.post("/api/documents/upload", upload.single("file"), (req, res) => {
+  const schema = z.object({
+    type: z.enum(["invoice", "order", "customs", "reconciliation", "other"])
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    if (req.file) fs.unlink(req.file.path, () => undefined);
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: "Dosya yüklenemedi." });
+    return;
+  }
+  const uploadedFile = req.file;
+
+  try {
+    res.status(201).json(
+      extractUploadedDocument({
+        originalName: uploadedFile.originalname,
+        storedFileName: uploadedFile.filename,
+        path: uploadedFile.path,
+        mimeType: uploadedFile.mimetype,
+        sizeBytes: uploadedFile.size,
+        type: parsed.data.type
+      })
+    );
+  } catch (error) {
+    fs.unlink(uploadedFile.path, () => undefined);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Doküman işlenemedi." });
+  }
+});
+
 app.patch("/api/documents/:id/fields", (req, res) => {
   const schema = z.object({
     fieldId: z.string(),
@@ -520,6 +584,22 @@ app.post("/api/files/:id/submit", (_req, res) => {
   file.auditLog.unshift({ ts, actor: "user", action: "İnsan onayı verildi ve dosya portala gönderilmiş olarak işaretlendi." });
   file.auditLog.unshift({ ts, actor: "bot", action: "Müşteri bilgilendirme metni üretildi ve iletişim geçmişine kaydedildi." });
   res.json(saveFile(file));
+});
+
+app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+  if (error instanceof multer.MulterError) {
+    res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Dosya boyutu 10MB sınırını aşamaz." : error.message });
+    return;
+  }
+  if (error instanceof Error) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+  next(error);
 });
 
 const distDir = path.resolve(process.cwd(), "dist");

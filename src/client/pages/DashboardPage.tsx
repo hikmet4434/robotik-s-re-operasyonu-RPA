@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Sparkles,
   Table2,
-  TimerReset
+  TimerReset,
+  Upload
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
@@ -617,20 +618,37 @@ function Approvals({ data, onResolve }: { data: SaasDashboard; onResolve: (task:
 }
 
 function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<void> }) {
-  const [name, setName] = useState("Yeni-Fatura-Demo.pdf");
   const [type, setType] = useState<DocumentRecord["type"]>("invoice");
+  const [file, setFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function extract() {
-    await api.extractDocument({ name, type });
-    await refresh();
+  async function uploadDocument() {
+    if (!file) return;
+    setIsUploading(true);
+    setError(null);
+    try {
+      await api.uploadDocument({ file, type });
+      setFile(null);
+      await refresh();
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Doküman yüklenemedi.");
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="section-title">Doküman İşle</h2>
+        <h2 className="section-title">Doküman Yükle</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_220px_auto]">
-          <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
+          <input
+            className="input"
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.json,application/pdf,image/png,image/jpeg,image/webp,text/plain,text/csv,application/json"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
           <select className="input" value={type} onChange={(event) => setType(event.target.value as DocumentRecord["type"])}>
             <option value="invoice">Fatura</option>
             <option value="order">Sipariş</option>
@@ -638,11 +656,13 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
             <option value="reconciliation">Mutabakat</option>
             <option value="other">Diğer</option>
           </select>
-          <button className="button-primary" onClick={() => void extract()}>
-            <FileSearch size={16} />
-            Alan Çıkar
+          <button className="button-primary" onClick={() => void uploadDocument()} disabled={!file || isUploading}>
+            <Upload size={16} />
+            {isUploading ? "Yükleniyor" : "Yükle"}
           </button>
         </div>
+        {file ? <div className="mt-3 text-sm text-muted">{file.name} · {Math.ceil(file.size / 1024)} KB</div> : null}
+        {error ? <div className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{error}</div> : null}
       </section>
       <section className="grid gap-4 lg:grid-cols-2">
         {data.documents.map((doc) => (
@@ -650,7 +670,11 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-bold">{doc.name}</h2>
-                <div className="mt-1 text-sm text-muted">{doc.type} · {doc.status}</div>
+                <div className="mt-1 text-sm text-muted">
+                  {doc.type} · {doc.status}
+                  {doc.source ? ` · ${doc.source}` : ""}
+                  {doc.sizeBytes ? ` · ${Math.ceil(doc.sizeBytes / 1024)} KB` : ""}
+                </div>
               </div>
               <FileSearch className="text-brand" size={22} />
             </div>

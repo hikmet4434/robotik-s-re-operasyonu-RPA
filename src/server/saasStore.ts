@@ -81,6 +81,16 @@ const DEFAULT_WORKER_ID = "wrk_cloud_01";
 const DEFAULT_QUEUE_ID = "que_kobi_ops";
 
 const sensitiveSecretPattern = /(e[-\s]?imza|pin|sms|otp|tek kullanımlık|banka|mobil imza|elektronik imza)/i;
+const textLikeMimePattern = /^(text\/|application\/json|application\/csv|text\/csv)/i;
+
+export interface UploadedDocumentInput {
+  originalName: string;
+  storedFileName: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  type: DocumentRecord["type"];
+}
 
 function seedState(): SaasState {
   const createdAt = now();
@@ -859,6 +869,125 @@ export function extractDocument(input: { name: string; type: DocumentRecord["typ
   audit(state, "ai", `${document.name} için doküman alanları çıkarıldı.`, "document", document.id);
   writeState(state);
   return document;
+}
+
+export function extractUploadedDocument(input: UploadedDocumentInput) {
+  const state = readState();
+  const dashboard = getDashboard();
+  if (dashboard.usage.documents >= dashboard.plan.limits.documents) {
+    throw new Error("Plan limiti aşıldı: doküman sınırına ulaşıldı.");
+  }
+
+  const extractedText = readExtractableText(input);
+  const fields = buildFieldsFromUploadedDocument(input, extractedText);
+  const needsReview = fields.some((field) => field.confidence < 80);
+  const document: DocumentRecord = {
+    id: id("doc"),
+    organizationId: DEFAULT_ORG_ID,
+    name: input.originalName,
+    type: input.type,
+    status: needsReview ? "needs_review" : "extracted",
+    source: "upload",
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+    storedFileName: input.storedFileName,
+    fields,
+    createdAt: now()
+  };
+  state.documents.unshift(document);
+
+  if (needsReview) {
+    state.approvals.unshift({
+      id: id("app"),
+      organizationId: DEFAULT_ORG_ID,
+      documentId: document.id,
+      title: `${document.name} gerçek veri doğrulaması`,
+      summary: "Yüklenen gerçek dokümanda düşük güvenli veya OCR bekleyen alan var. Onay verilmeden final otomasyon adımı çalışmaz.",
+      riskLevel: input.type === "customs" ? "high" : "medium",
+      status: "pending",
+      diff: document.fields.map((field) => ({ label: field.label, before: "Yüklenen dosya", after: `${field.value} (%${field.confidence})` })),
+      dueAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      createdAt: now()
+    });
+  }
+
+  audit(state, "ai", `${document.name} gerçek dosyadan işlendi; kaynak=${input.mimeType}.`, "document", document.id);
+  writeState(state);
+  return document;
+}
+
+function readExtractableText(input: UploadedDocumentInput) {
+  if (!textLikeMimePattern.test(input.mimeType)) {
+    return "";
+  }
+
+  try {
+    return fs.readFileSync(input.path, "utf8").slice(0, 80_000);
+  } catch {
+    return "";
+  }
+}
+
+function buildFieldsFromUploadedDocument(input: UploadedDocumentInput, text: string): import("../shared/saasTypes").SaasExtractedField[] {
+  const normalized = text.replace(/\r/g, "\n");
+  const isTextExtracted = normalized.trim().length > 0;
+  const fallbackConfidence = isTextExtracted ? 68 : 42;
+  const sourceLabel = isTextExtracted ? "Metinden çıkarıldı" : "OCR bekliyor";
+  const fields: import("../shared/saasTypes").SaasExtractedField[] = [
+    makeExtractedField("party", "Taraf", extractParty(normalized) ?? `${sourceLabel}: ${input.originalName}`, isTextExtracted ? 82 : fallbackConfidence),
+    makeExtractedField("amount", "Tutar", extractAmount(normalized) ?? "Doğrulama gerekli", extractAmount(normalized) ? 86 : fallbackConfidence),
+    makeExtractedField("date", "Tarih", extractDate(normalized) ?? "Doğrulama gerekli", extractDate(normalized) ? 88 : fallbackConfidence)
+  ];
+
+  const documentNo = extractDocumentNo(normalized);
+  if (documentNo) {
+    fields.push(makeExtractedField("document_no", "Belge No", documentNo, 84));
+  }
+
+  if (!isTextExtracted) {
+    fields.push(makeExtractedField("ocr_status", "İşleme Notu", "PDF/görsel içeriği yüklendi; OCR/AI sağlayıcısı bağlanınca otomatik okunacak.", 42));
+  }
+
+  return fields;
+}
+
+function makeExtractedField(key: string, label: string, value: string, confidence: number): import("../shared/saasTypes").SaasExtractedField {
+  return {
+    id: id("fld"),
+    key,
+    label,
+    value,
+    confidence,
+    verified: confidence >= 95
+  };
+}
+
+function extractAmount(text: string) {
+  const labeled = text.match(/(?:genel\s*toplam|toplam\s*tutar|toplam|tutar|amount|total)\s*[:=-]?\s*([0-9][0-9.,\s]*(?:TL|TRY|USD|EUR|₺|\$|€)?)/i);
+  if (labeled?.[1]) return labeled[1].replace(/\s+/g, " ").trim();
+
+  const moneyMatches = [...text.matchAll(/([0-9]{1,3}(?:[.,\s][0-9]{3})*(?:[.,][0-9]{2})?\s*(?:TL|TRY|USD|EUR|₺|\$|€))/gi)].map((match) => match[1].trim());
+  return moneyMatches.at(-1);
+}
+
+function extractDate(text: string) {
+  const labeled = text.match(/(?:tarih|date|fatura\s*tarihi|belge\s*tarihi)\s*[:=-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+  if (labeled?.[1]) return labeled[1].trim();
+  return text.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\b/)?.[1];
+}
+
+function extractParty(text: string) {
+  const labeled = text.match(/(?:tedarikçi|m[üu]şteri|cari|firma|alıcı|satıcı|customer|supplier)\s*[:=-]\s*(.+)/i);
+  if (labeled?.[1]) return labeled[1].slice(0, 120).trim();
+
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length >= 4 && line.length <= 120 && /(ltd|limited|a\.ş|anonim|ticaret|sanayi|company|inc|llc)/i.test(line));
+}
+
+function extractDocumentNo(text: string) {
+  return text.match(/(?:fatura|belge|evrak|sipariş|order|invoice)\s*(?:no|numarası|number|#)\s*[:=-]?\s*([A-Z0-9-]{3,40})/i)?.[1];
 }
 
 export function updateDocumentField(documentId: string, fieldId: string, value: string) {

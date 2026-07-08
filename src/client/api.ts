@@ -14,10 +14,11 @@ import type {
 } from "../shared/saasTypes";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...init?.headers
     }
   });
@@ -52,6 +53,12 @@ export const api = {
   rejectTask: (id: string) => request<ApprovalTask>(`/api/approvals/${id}/reject`, { method: "POST", body: "{}" }),
   extractDocument: (body: { name: string; type: DocumentRecord["type"] }) =>
     request<DocumentRecord>("/api/documents/extract", { method: "POST", body: JSON.stringify(body) }),
+  uploadDocument: (body: { file: File; type: DocumentRecord["type"] }) => {
+    const formData = new FormData();
+    formData.append("file", body.file);
+    formData.append("type", body.type);
+    return request<DocumentRecord>("/api/documents/upload", { method: "POST", body: formData });
+  },
   updateDocumentField: (id: string, body: { fieldId: string; value: string }) =>
     request<DocumentRecord>(`/api/documents/${id}/fields`, { method: "PATCH", body: JSON.stringify(body) }),
   createOpportunity: (body: Pick<AutomationOpportunity, "title" | "department" | "monthlyVolume" | "minutesPerTask" | "errorRisk" | "feasibility">) =>
