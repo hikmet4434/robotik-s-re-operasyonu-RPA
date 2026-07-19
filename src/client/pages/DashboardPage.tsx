@@ -896,6 +896,15 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
   const scheduled = data.workflows.filter((workflow) => workflow.schedule?.enabled);
   const activeCount = data.jobs.filter((job) => ["queued", "running", "waiting_approval"].includes(job.status)).length;
 
+  function downloadResult(job: Job) {
+    const blob = new Blob([JSON.stringify({ jobId: job.id, status: job.status, outputs: job.outputs, completedAt: job.completedAt }, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `otoflow-sonuc-${job.id}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 md:grid-cols-3">
@@ -924,6 +933,8 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
         />
       </section>
 
+      {selectedJob ? <JobResultPanel job={selectedJob} onDownload={() => downloadResult(selectedJob)} /> : null}
+
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="panel overflow-hidden">
           <TableHeader title="Kuyruklar" subtitle="İş yükü ve bekleyen kalem görünümü" />
@@ -949,6 +960,59 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
         </section>
       </div>
     </div>
+  );
+}
+
+type FriendlyJobResult = {
+  status?: string;
+  title?: string;
+  summary?: string;
+  metrics?: Array<{ label: string; value: string }>;
+  details?: string[];
+  generatedAt?: string;
+  source?: string;
+};
+
+function friendlyJobResult(job: Job): FriendlyJobResult | null {
+  const candidate = job.outputs?._result;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  return candidate as FriendlyJobResult;
+}
+
+function JobResultPanel({ job, onDownload }: { job: Job; onDownload: () => void }) {
+  const result = friendlyJobResult(job);
+  const active = ["queued", "running", "waiting_approval"].includes(job.status);
+  const progress = job.totalSteps > 0 ? Math.round((Math.min(job.currentStepIndex, job.totalSteps) / job.totalSteps) * 100) : 0;
+
+  return (
+    <section className="panel overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="section-title">{result?.title || (active ? "Otomasyon Çalışıyor" : job.status === "failed" ? "Çalıştırma Sonucu" : "Çalışma Sonucu")}</h2>
+          <p className="muted mt-1">{result?.source || `${job.id} numaralı işin ürettiği çıktı`}</p>
+        </div>
+        {job.outputs && Object.keys(job.outputs).length > 0 ? <button className="button-secondary shrink-0" onClick={onDownload}><Download size={16} />Sonucu İndir</button> : null}
+      </div>
+
+      {active ? (
+        <div className="px-5 py-5">
+          <div className="flex items-center justify-between gap-4 text-sm font-semibold"><span>{job.status === "waiting_approval" ? "Devam etmek için onay bekleniyor" : "Robot adımları sırayla yürütüyor"}</span><span className="text-brand">%{progress}</span></div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-brand transition-all duration-500" style={{ width: `${progress}%` }} /></div>
+          <p className="muted mt-3">{Math.min(job.currentStepIndex + 1, job.totalSteps)}/{job.totalSteps}. adım işleniyor. Sonuç tamamlandığında burada otomatik görünecek.</p>
+        </div>
+      ) : result ? (
+        <div>
+          <div className={`px-5 py-4 text-sm leading-6 ${result.status === "agent_required" || job.status === "failed" ? "bg-red-50 text-red-900" : "bg-teal-50 text-teal-950"}`}>{result.summary}</div>
+          {result.metrics?.length ? <div className="grid border-y border-line sm:grid-cols-3">{result.metrics.map((metric) => <div key={metric.label} className="border-b border-line px-5 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"><div className="text-xs font-semibold uppercase text-muted">{metric.label}</div><div className="mt-1 text-xl font-bold text-ink">{metric.value}</div></div>)}</div> : null}
+          {result.details?.length ? <div className="px-5 py-4"><h3 className="text-sm font-bold">Üretilen sonuçlar</h3><div className="mt-3 divide-y divide-line border-y border-line">{result.details.filter(Boolean).map((detail, index) => <div key={`${index}-${detail}`} className="py-3 text-sm leading-6 text-ink">{detail}</div>)}</div></div> : null}
+          {result.generatedAt ? <div className="border-t border-line px-5 py-3 text-xs text-muted">Tamamlanma: {formatDate(result.generatedAt)}</div> : null}
+        </div>
+      ) : (
+        <div className={`px-5 py-5 text-sm leading-6 ${job.status === "failed" ? "bg-red-50 text-red-900" : "text-muted"}`}>
+          {job.lastError || "Bu eski çalıştırmada görüntülenebilir bir sonuç üretilmemiş. Otomasyonu yeniden çalıştırdığınızda sonuç burada oluşacak."}
+        </div>
+      )}
+    </section>
   );
 }
 

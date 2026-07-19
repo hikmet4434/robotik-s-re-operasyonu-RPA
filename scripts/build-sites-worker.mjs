@@ -87,8 +87,175 @@ function seedField(key, label, value, confidence) {
   return { id: id("fld"), key, label, value, confidence, verified: confidence >= 95 };
 }
 
-function seedStep(type, title, description, requiresApproval, riskLevel) {
-  return { id: id("step"), type, title, description, requiresApproval, riskLevel };
+function seedStep(type, title, description, requiresApproval, riskLevel, parameters, approvalPrompt) {
+  return { id: id("step"), type, title, description, requiresApproval, riskLevel, parameters, approvalPrompt };
+}
+
+function workflowSteps(workflow) {
+  if (Array.isArray(workflow.steps) && workflow.steps.length > 0) return workflow.steps;
+  const builtIns = {
+    wf_invoice: [
+      seedStep("document.extract", "Fatura alanlarini cikar", "Demo tenant icindeki bekleyen faturanin alanlarini okur.", false, "medium", { outputKey: "invoiceFields" }),
+      seedStep("approval.wait", "Dusuk guvenli alanlari onayla", "Dusuk guvenli fatura alanlarini teknik kullaniciya sunar.", true, "high", undefined, "Cikarilan fatura alanlari tabloya islenmeden once onaylansin mi?"),
+      seedStep("table.append", "Onayli faturayi tabloya isle", "Onaylanan alanlari finans tablosuna ekler.", false, "medium", { outputKey: "tableResult" }),
+    ],
+    wf_portal: [
+      seedStep("http.request", "Portal siparislerini al", "OtoFlow demo portalindaki yeni siparisleri okur.", false, "low", { outputKey: "portalOrders" }),
+      seedStep("table.append", "Siparis raporunu olustur", "Siparisleri operasyon raporuna aktarir.", false, "low", { outputKey: "reportRows" }),
+      seedStep("webhook.emit", "Operasyon bildirimini gonder", "Tamamlanan raporun webhook bildirimini uretir.", false, "low", { outputKey: "webhookResult" }),
+    ],
+    wf_reconcile: [
+      seedStep("document.extract", "Cari hareketleri ozetle", "Demo cari hareketlerinden mutabakat tutarini cikarir.", false, "medium", { outputKey: "reconciliation" }),
+      seedStep("email.draft", "Mutabakat e-postasi hazirla", "Musteriye gonderilecek e-posta taslagini olusturur.", false, "medium", { outputKey: "emailDraft" }),
+      seedStep("approval.wait", "E-posta gonderim onayi", "Taslagi gondermeden once teknik kullanici onayi ister.", true, "high", undefined, "Mutabakat e-postasi gonderilsin mi?"),
+      seedStep("email.send_after_approval", "Onayli e-postayi gonder", "Onaylanan taslagi demo iletisim kaydina ekler.", false, "high", { outputKey: "emailDelivery" }),
+    ],
+    wf_customs: [
+      seedStep("document.extract", "Gumruk belgelerini dogrula", "Fatura, ceki listesi ve konsimento alanlarini karsilastirir.", false, "medium", { outputKey: "customsValidation" }),
+      seedStep("condition", "GTIP ve vergi riskini kontrol et", "Dusuk guvenli alanlari ve GTIP onerilerini risk kurallariyla kontrol eder.", false, "high", { outputKey: "riskCheck" }),
+      seedStep("approval.wait", "Gumruk sonucu onayi", "Yasal etkili sonuc icin teknik kullanici onayi ister.", true, "critical", undefined, "GTIP ve vergi ozeti onaylansin mi?"),
+      seedStep("webhook.emit", "Dosya sonucunu yayinla", "Onaylanan sonucu demo musteri portalina kaydeder.", false, "medium", { outputKey: "customsDelivery" }),
+    ],
+  };
+  return builtIns[workflow.id] || [];
+}
+
+function syncQueueItem(state, job) {
+  const queueItem = state.queueItems.find((item) => item.id === job.queueItemId);
+  if (queueItem) queueItem.status = job.status;
+}
+
+function logJob(state, job, level, message) {
+  state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level, message });
+}
+
+function needsLocalAgent(step) {
+  return /^(browser|desktop|files|activity|report)\./.test(step.type);
+}
+
+function cloudStepOutput(state, workflow, step) {
+  if (workflow.id === "wf_portal" && step.type === "http.request") {
+    return { source: "OtoFlow Demo Portal", orderCount: 3, totalTRY: 286750, orders: [
+      { orderNo: "SIP-1042", customer: "Mavi Masa Cafe", amountTRY: 82400, status: "Yeni" },
+      { orderNo: "SIP-1043", customer: "Kuzey Otel", amountTRY: 119350, status: "Hazirlaniyor" },
+      { orderNo: "SIP-1044", customer: "Ada Restoran", amountTRY: 85000, status: "Yeni" },
+    ] };
+  }
+  if (workflow.id === "wf_portal" && step.type === "table.append") return { target: "Operasyon Siparis Raporu", rowsWritten: 3, columns: ["Siparis", "Musteri", "Tutar", "Durum"] };
+  if (workflow.id === "wf_portal" && step.type === "webhook.emit") return { delivered: true, endpoint: "Demo operasyon webhook", statusCode: 200 };
+  if (workflow.id === "wf_invoice" && step.type === "document.extract") {
+    const document = state.documents[0];
+    return { document: document?.name || "Fatura", fields: document?.fields || [], lowConfidenceCount: (document?.fields || []).filter((field) => field.confidence < 90).length };
+  }
+  if (workflow.id === "wf_invoice" && step.type === "table.append") return { target: "Finans Fatura Tablosu", rowsWritten: 1, status: "Onayli" };
+  if (workflow.id === "wf_reconcile" && step.type === "document.extract") return { customer: "Demo Musteri A.S.", balanceTRY: 124500, transactionCount: 18, period: "Temmuz 2026" };
+  if (workflow.id === "wf_reconcile" && step.type === "email.draft") return { to: "musteri@example.com", subject: "Temmuz 2026 cari mutabakat", preview: "Kayitlarimiza gore 124.500 TL bakiye bulunuyor. Mutabakat teyidinizi rica ederiz." };
+  if (workflow.id === "wf_reconcile" && step.type === "email.send_after_approval") return { delivered: true, channel: "Demo e-posta", recipient: "musteri@example.com" };
+  if (workflow.id === "wf_customs" && step.type === "document.extract") {
+    const file = state.files[0];
+    const fields = (file?.documents || []).flatMap((document) => document.fields.map((field) => ({ document: document.name, label: field.label, value: field.value, confidence: field.confidence })));
+    return { fileNo: file?.id || "Demo gumruk dosyasi", documentCount: file?.documents?.length || 0, fields, reviewCount: fields.filter((field) => field.confidence < 90).length };
+  }
+  if (workflow.id === "wf_customs" && step.type === "condition") {
+    const suggestion = state.files[0]?.lineItems?.[0]?.gtipSuggestions?.[0];
+    return { recommendedGtip: suggestion?.code, confidence: suggestion?.confidence, reason: suggestion?.reason, decision: "Teknik kullanici onayi gerekli" };
+  }
+  if (workflow.id === "wf_customs" && step.type === "webhook.emit") return { delivered: true, target: "Demo musteri portali", fileNo: state.files[0]?.id };
+  if (step.type === "approval.wait") return { approved: true, approvedAt: now() };
+  return { completed: true, step: step.title, processedAt: now() };
+}
+
+function resultForJob(workflow, job) {
+  const outputs = job.outputs || {};
+  const metrics = [];
+  let summary = workflow.name + " tum adimlariyla tamamlandi.";
+  const details = [];
+  if (workflow.id === "wf_portal") {
+    metrics.push({ label: "Yeni siparis", value: String(outputs.portalOrders?.orderCount || 0) });
+    metrics.push({ label: "Toplam tutar", value: new Intl.NumberFormat("tr-TR").format(outputs.portalOrders?.totalTRY || 0) + " TL" });
+    metrics.push({ label: "Rapor satiri", value: String(outputs.reportRows?.rowsWritten || 0) });
+    summary = "Demo portaldan 3 siparis alindi, operasyon raporuna islendi ve bildirim gonderildi.";
+    for (const order of outputs.portalOrders?.orders || []) details.push(order.orderNo + " | " + order.customer + " | " + new Intl.NumberFormat("tr-TR").format(order.amountTRY) + " TL | " + order.status);
+  } else if (workflow.id === "wf_invoice") {
+    metrics.push({ label: "Islenen fatura", value: "1" });
+    metrics.push({ label: "Tabloya yazilan", value: String(outputs.tableResult?.rowsWritten || 0) });
+    summary = "Fatura alanlari cikarildi, insan onayi alindi ve finans tablosuna islendi.";
+    for (const field of outputs.invoiceFields?.fields || []) details.push(field.label + ": " + field.value + " (%" + field.confidence + ")");
+  } else if (workflow.id === "wf_customs") {
+    metrics.push({ label: "Belge", value: String(outputs.customsValidation?.documentCount || 0) });
+    metrics.push({ label: "Kontrol gereken alan", value: String(outputs.customsValidation?.reviewCount || 0) });
+    metrics.push({ label: "GTIP guveni", value: "%" + String(outputs.riskCheck?.confidence || 0) });
+    summary = "Gumruk belgeleri karsilastirildi, GTIP riski kontrol edildi ve onayli sonuc portala kaydedildi.";
+    details.push("Onerilen GTIP: " + (outputs.riskCheck?.recommendedGtip || "Bulunamadi"));
+    details.push("Gerekce: " + (outputs.riskCheck?.reason || "Bulunamadi"));
+  } else if (workflow.id === "wf_reconcile") {
+    metrics.push({ label: "Cari hareket", value: String(outputs.reconciliation?.transactionCount || 0) });
+    metrics.push({ label: "Bakiye", value: new Intl.NumberFormat("tr-TR").format(outputs.reconciliation?.balanceTRY || 0) + " TL" });
+    summary = "Cari hareketler ozetlendi, e-posta taslagi onaylandi ve demo teslimat kaydi olusturuldu.";
+    details.push(outputs.emailDraft?.subject || "Mutabakat e-postasi");
+    details.push(outputs.emailDraft?.preview || "");
+  } else {
+    metrics.push({ label: "Tamamlanan adim", value: String(job.totalSteps) });
+    details.push("Workflow ciktisi JSON dosyasi olarak indirilebilir.");
+  }
+  return { status: "succeeded", title: "Calisma Sonucu", summary, metrics, details, generatedAt: now(), source: "OtoFlow Bulut Robotu" };
+}
+
+function createJobApproval(state, workflow, job, step) {
+  const existing = state.approvals.find((item) => item.jobId === job.id && item.stepIndex === job.currentStepIndex);
+  if (existing) return existing;
+  const approval = { id: id("app"), organizationId: ORG_ID, jobId: job.id, stepIndex: job.currentStepIndex, resumeAction: step.type === "approval.wait" ? "advance" : "execute", title: step.title, summary: step.approvalPrompt || workflow.name + " icindeki bu adim icin teknik kullanici onayi gerekiyor.", riskLevel: step.riskLevel === "low" ? "medium" : step.riskLevel, status: "pending", diff: [{ label: "Workflow", before: "Beklemede", after: workflow.name }, { label: "Calisacak adim", before: "Kapali", after: String(job.currentStepIndex + 1) + ". " + step.title }], dueAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now() };
+  state.approvals.unshift(approval);
+  return approval;
+}
+
+function advanceCloudJobs(state) {
+  for (const job of state.jobs.filter((item) => item.status === "queued" || item.status === "running")) {
+    const workflow = state.workflows.find((item) => item.id === job.workflowId);
+    if (!workflow) continue;
+    const steps = workflowSteps(workflow);
+    if (job.status === "queued") {
+      job.status = "running";
+      job.startedAt ||= now();
+      syncQueueItem(state, job);
+      logJob(state, job, "info", "Bulut robotu isi aldi; " + String(job.currentStepIndex + 1) + "/" + String(steps.length) + " adim hazirlaniyor.");
+      continue;
+    }
+    const step = steps[job.currentStepIndex];
+    if (!step) {
+      job.status = "succeeded";
+      job.completedAt = now();
+      job.outputs = { ...(job.outputs || {}), _result: resultForJob(workflow, job) };
+      syncQueueItem(state, job);
+      logJob(state, job, "info", "Workflow butun adimlariyla tamamlandi; calisma sonucu hazir.");
+      continue;
+    }
+    const approvedSteps = Array.isArray(job.approvedStepIndexes) ? job.approvedStepIndexes : [];
+    const needsApproval = step.type === "approval.wait" || step.requiresApproval || step.riskLevel === "critical";
+    if (needsApproval && !approvedSteps.includes(job.currentStepIndex)) {
+      job.status = "waiting_approval";
+      createJobApproval(state, workflow, job, step);
+      syncQueueItem(state, job);
+      logJob(state, job, "warn", String(job.currentStepIndex + 1) + ". adim teknik kullanici onayi bekliyor: " + step.title + ".");
+      continue;
+    }
+    if (needsLocalAgent(step)) {
+      job.status = "failed";
+      job.completedAt = now();
+      job.lastError = "Bu adim bilgisayardaki dosya veya uygulamaya erismek icin Yerel Ajan gerektiriyor: " + step.title + ".";
+      job.outputs = { ...(job.outputs || {}), _result: { status: "agent_required", title: "Yerel Ajan Gerekli", summary: job.lastError, metrics: [{ label: "Bekleyen adim", value: String(job.currentStepIndex + 1) + "/" + String(steps.length) }], details: ["OtoFlow Yerel Ajanini bu bilgisayarda acin ve otomasyonu yeniden calistirin."], generatedAt: now(), source: "OtoFlow Bulut Robotu" } };
+      syncQueueItem(state, job);
+      logJob(state, job, "error", job.lastError);
+      continue;
+    }
+    const output = cloudStepOutput(state, workflow, step);
+    const outputKey = step.parameters?.outputKey || "step_" + String(job.currentStepIndex + 1);
+    job.outputs = { ...(job.outputs || {}), [outputKey]: output };
+    logJob(state, job, "info", String(job.currentStepIndex + 1) + "/" + String(steps.length) + " tamamlandi: " + step.title + ".");
+    job.currentStepIndex += 1;
+    job.status = job.currentStepIndex >= steps.length ? "running" : "queued";
+    syncQueueItem(state, job);
+  }
 }
 
 function buildAiFilePlan(body) {
@@ -390,6 +557,7 @@ function audit(state, actor, action, entityType, entityId) {
 
 function dashboard() {
   const state = getState();
+  advanceCloudJobs(state);
   const succeeded = state.jobs.filter((job) => job.status === "succeeded").length;
   const finished = state.jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status)).length;
   return {
@@ -452,9 +620,12 @@ async function handleApi(request, url) {
   if (method === "GET" && path === "/api/me") return json({ organization: state.organization, user: state.user, membership: state.membership, plan: state.plan, subscription: state.subscription });
   if (method === "GET" && path === "/api/org/current") return json({ organization: state.organization, membership: state.membership, plan: state.plan, subscription: state.subscription });
   if (method === "GET" && path === "/api/dashboard") return json(dashboard());
-  if (method === "GET" && path === "/api/workflows") return json(state.workflows.map((workflow) => ({ ...workflow, version: { id: workflow.currentVersionId, workflowId: workflow.id, version: 1, steps: [] } })));
+  if (method === "GET" && path === "/api/workflows") return json(state.workflows.map((workflow) => ({ ...workflow, version: { id: workflow.currentVersionId, workflowId: workflow.id, version: 1, steps: workflowSteps(workflow) } })));
   if (method === "GET" && path === "/api/recordings") return json(state.recordingSessions.map((session) => ({ ...session, events: state.recorderEvents.filter((event) => event.target.startsWith(session.id + ":")), draft: state.automationDrafts.find((draft) => draft.recordingSessionId === session.id) })));
-  if (method === "GET" && path === "/api/jobs") return json(state.jobs.map((job) => ({ ...job, workflow: state.workflows.find((workflow) => workflow.id === job.workflowId), logs: state.jobLogs.filter((log) => log.jobId === job.id) })));
+  if (method === "GET" && path === "/api/jobs") {
+    advanceCloudJobs(state);
+    return json(state.jobs.map((job) => ({ ...job, workflow: state.workflows.find((workflow) => workflow.id === job.workflowId), logs: state.jobLogs.filter((log) => log.jobId === job.id) })));
+  }
   if (method === "GET" && path === "/api/approvals") return json(state.approvals);
   if (method === "GET" && path === "/api/connectors") return json(state.connectors);
   if (method === "GET" && path === "/api/credentials") return json(state.credentialProfiles);
@@ -628,17 +799,14 @@ async function handleApi(request, url) {
     if (!workflow) return error("Workflow bulunamadi.", 404);
     if (workflow.status !== "published") return error("Yalnizca yayindaki otomasyonlar calistirilabilir.");
     const body = await readJson(request);
-    const configuredApprovalStep = (workflow.steps || []).findIndex((step) => step.requiresApproval || step.type === "approval.wait" || step.riskLevel === "critical");
-    const requiresApproval = workflow.id === "wf_invoice" || workflow.id === "wf_customs" || workflow.category === "genel" || configuredApprovalStep >= 0;
+    const steps = workflowSteps(workflow);
+    if (steps.length === 0) return error("Workflow icinde calistirilabilir adim bulunamadi.");
     const queueItemId = id("qitem");
-    const totalSteps = Math.max(1, (workflow.steps || []).length);
-    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, currentStepIndex: requiresApproval ? Math.max(0, configuredApprovalStep) : totalSteps, totalSteps, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
+    const totalSteps = steps.length;
+    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: "queued", retryCount: 0, maxRetries: 2, currentStepIndex: 0, totalSteps, outputs: {}, createdAt: now() };
     state.queueItems.unshift({ id: queueItemId, organizationId: ORG_ID, queueId: QUEUE_ID, workflowId: workflow.id, status: job.status, payloadSummary: body.payloadSummary || "Manuel calistirma", createdAt: job.createdAt });
     state.jobs.unshift(job);
-    state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level: "info", message: requiresApproval ? "Otomasyon insan onayi bekliyor." : "Otomasyon basariyla tamamlandi." });
-    if (requiresApproval) {
-      state.approvals.unshift({ id: id("app"), organizationId: ORG_ID, jobId: job.id, title: workflow.name + " icin onay", summary: "Bu otomasyon riskli veya yasal/finansal etkili bir adim iceriyor.", riskLevel: workflow.id === "wf_customs" ? "critical" : "high", status: "pending", diff: [{ label: "Robot ciktisi", before: "Taslak", after: body.payloadSummary || "Demo calistirma" }, { label: "Final aksiyon", before: "Kapali", after: "Onay sonrasi calisacak" }], dueAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now() });
-    }
+    logJob(state, job, "info", workflow.name + " robot kuyruguna alindi; " + String(totalSteps) + " adim calisacak.");
     audit(state, "robot", workflow.name + " icin job olusturuldu: " + job.status + ".", "job", job.id);
     return json(job, 201);
   }
@@ -666,12 +834,18 @@ async function handleApi(request, url) {
     if (approval.jobId) {
       const job = state.jobs.find((item) => item.id === approval.jobId);
       if (job) {
-        job.status = approved ? "succeeded" : "failed";
-        job.currentStepIndex = approved ? job.totalSteps : job.currentStepIndex;
-        job.completedAt = now();
-        const queueItem = state.queueItems.find((item) => item.id === job.queueItemId);
-        if (queueItem) queueItem.status = job.status;
-        state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level: approved ? "info" : "error", message: approved ? "Onay alindi; otomasyon tamamlandi." : "Onay reddedildi; otomasyon durduruldu." });
+        if (approved) {
+          job.approvedStepIndexes = [...new Set([...(job.approvedStepIndexes || []), approval.stepIndex])];
+          if (approval.resumeAction === "advance") job.currentStepIndex += 1;
+          job.status = "queued";
+          job.completedAt = undefined;
+        } else {
+          job.status = "failed";
+          job.lastError = "Teknik kullanici onayi reddetti.";
+          job.completedAt = now();
+        }
+        syncQueueItem(state, job);
+        logJob(state, job, approved ? "info" : "error", approved ? "Onay alindi; otomasyon kaldigi adimdan devam edecek." : "Onay reddedildi; otomasyon durduruldu.");
       }
     }
     audit(state, "user", approved ? "Onay gorevi onaylandi." : "Onay gorevi reddedildi.", "approval", approval.id);
