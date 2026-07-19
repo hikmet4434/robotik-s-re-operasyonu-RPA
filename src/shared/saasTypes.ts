@@ -54,7 +54,7 @@ export interface AiSettings {
 }
 
 export interface AiRuntimeStatus {
-  mode: "openrouter_fallback" | "local_template";
+  mode: "managed_fallback" | "direct_ai" | "local_template";
   configured: boolean;
   modelCount: number;
 }

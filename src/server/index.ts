@@ -9,7 +9,7 @@ import type { Actor } from "../shared/types";
 import { calculateTax } from "./tax";
 import { createUploadedFile } from "./seed";
 import { dashboardStats, getFile, listFiles, nextFileNumber, saveFile } from "./db";
-import { generateAutomationPlan, summarizeFilesWithLlm } from "./aiAutomation";
+import { extractDocumentTextWithGlmOcr, generateAutomationPlan, summarizeFilesWithLlm } from "./aiAutomation";
 import {
   cancelJob,
   analyzeRecording,
@@ -405,14 +405,19 @@ app.get("/api/ai/settings", (_req, res) => {
 app.get("/api/ai/status", (_req, res) => {
   const settings = getAiRuntimeSettings();
   res.json({
-    mode: settings.provider === "openrouter" && settings.models?.length === 3 ? "openrouter_fallback" : "local_template",
+    mode: settings.provider === "template" ? "local_template" : settings.models && settings.models.length > 1 ? "managed_fallback" : "direct_ai",
     configured: settings.provider === "template" || Boolean(settings.apiKey),
-    modelCount: settings.models?.length || 1
+    modelCount: settings.models?.length || 1,
+    capabilities: {
+      planner: Boolean(process.env.ZAI_API_KEY || process.env.OPENROUTER_API_KEY),
+      vision: Boolean(process.env.ZAI_API_KEY && (process.env.ZAI_VISION_MODEL || "glm-5v-turbo")),
+      ocr: Boolean(process.env.ZAI_API_KEY && (process.env.ZAI_OCR_MODEL || "glm-ocr"))
+    }
   });
 });
 
 app.put("/api/ai/settings", (req, res) => {
-  if (process.env.OPENROUTER_API_KEY) {
+  if (process.env.ZAI_API_KEY || process.env.OPENROUTER_API_KEY) {
     res.status(403).json({ error: "LLM ayarları Coolify ortam değişkenleri tarafından yönetiliyor." });
     return;
   }
@@ -733,7 +738,7 @@ app.post("/api/documents/extract", (req, res) => {
   }
 });
 
-app.post("/api/documents/upload", upload.single("file"), (req, res) => {
+app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
   const schema = z.object({
     type: z.enum(["invoice", "order", "customs", "reconciliation", "other"])
   });
@@ -750,6 +755,16 @@ app.post("/api/documents/upload", upload.single("file"), (req, res) => {
   const uploadedFile = req.file;
 
   try {
+    let ocrResult;
+    try {
+      ocrResult = await extractDocumentTextWithGlmOcr({
+        path: uploadedFile.path,
+        mimeType: uploadedFile.mimetype,
+        sizeBytes: uploadedFile.size
+      });
+    } catch (error) {
+      console.warn(error instanceof Error ? error.message : "GLM-OCR çağrısı başarısız oldu.");
+    }
     res.status(201).json(
       extractUploadedDocument({
         originalName: uploadedFile.originalname,
@@ -757,7 +772,9 @@ app.post("/api/documents/upload", upload.single("file"), (req, res) => {
         path: uploadedFile.path,
         mimeType: uploadedFile.mimetype,
         sizeBytes: uploadedFile.size,
-        type: parsed.data.type
+        type: parsed.data.type,
+        extractedText: ocrResult?.text,
+        extractionProvider: ocrResult?.providerLabel
       })
     );
   } catch (error) {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { normalizeGeneratedPlan, runWithModelFallback } from "../src/server/aiAutomation";
+import { extractDocumentTextWithGlmOcr, normalizeGeneratedPlan, resolveModelEndpoints, runWithModelFallback } from "../src/server/aiAutomation";
 
 const request = {
   prompt: "Her hafta yeni dosyaları incele, özetle ve pazartesi rapor hazırla.",
@@ -92,6 +92,7 @@ await assert.rejects(
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "otoflow-llm-test-"));
 process.env.SAAS_DATABASE_PATH = path.join(tempDir, "state.sqlite");
 process.env.OPENROUTER_API_KEY = "test-only-key";
+delete process.env.ZAI_API_KEY;
 delete process.env.OPENROUTER_MODEL_PRIMARY;
 delete process.env.OPENROUTER_MODEL_FALLBACK_1;
 delete process.env.OPENROUTER_MODEL_FALLBACK_2;
@@ -100,6 +101,30 @@ const { getAiRuntimeSettings } = await import("../src/server/saasStore");
 const settings = getAiRuntimeSettings();
 assert.deepEqual(settings.models, models);
 assert.equal(settings.apiKey, "test-only-key");
+
+process.env.ZAI_API_KEY = "test-zai-key";
+const directSettings = getAiRuntimeSettings();
+assert.deepEqual(directSettings.models, ["glm-5.2", "moonshotai/kimi-k3", "deepseek/deepseek-v4-pro"]);
+assert.equal(directSettings.modelChain?.[0].label, "Z.AI · glm-5.2");
+assert.equal(directSettings.modelChain?.[1].label, "OpenRouter · moonshotai/kimi-k3");
+assert.equal(resolveModelEndpoints(directSettings).length, 3);
+
+const imagePath = path.join(tempDir, "invoice.png");
+await fs.writeFile(imagePath, Buffer.from("fake-png"));
+let ocrRequestBody = "";
+const ocrResult = await extractDocumentTextWithGlmOcr(
+  { path: imagePath, mimeType: "image/png", sizeBytes: 8 },
+  { apiKey: "test-zai-key", baseUrl: "https://api.z.ai/api/paas/v4", model: "glm-ocr" },
+  async (_url, init) => {
+    ocrRequestBody = String(init?.body || "");
+    return new Response(JSON.stringify({ md_results: "Fatura No: INV-42\nToplam: 12.400 TL" }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+);
+assert.equal(ocrResult?.model, "glm-ocr");
+assert.match(ocrResult?.text || "", /INV-42/);
+assert.match(ocrRequestBody, /data:image\/png;base64/);
+
+delete process.env.ZAI_API_KEY;
 await fs.rm(tempDir, { recursive: true, force: true });
 
 console.log(JSON.stringify({ ok: true, models, fallbackAttempts: attempts.length }));

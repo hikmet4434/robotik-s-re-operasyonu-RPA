@@ -98,3 +98,14 @@ Coolify Environment Variables alanında `OPENROUTER_API_KEY` secret olarak tanı
 1. `OPENROUTER_MODEL_PRIMARY=z-ai/glm-5.2`
 2. `OPENROUTER_MODEL_FALLBACK_1=moonshotai/kimi-k3`
 3. `OPENROUTER_MODEL_FALLBACK_2=deepseek/deepseek-v4-pro`
+
+Doğrudan Z.AI anahtarı varsa `ZAI_API_KEY` de secret olarak eklenir. Bu durumda zincir `Z.AI glm-5.2 → OpenRouter Kimi K3 → OpenRouter DeepSeek V4 Pro` olur. Aynı anahtar uzman görevlerde de kullanılır:
+
+```text
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4
+ZAI_PLANNER_MODEL=glm-5.2
+ZAI_VISION_MODEL=glm-5v-turbo
+ZAI_OCR_MODEL=glm-ocr
+```
+
+`glm-5.2` otomasyon planını hazırlar, `glm-5v-turbo` ekran/görsel anlama yapılandırmasıdır, `glm-ocr` ise yüklenen PDF, PNG ve JPG belgelerinden gerçek metin çıkarır. API anahtarları repoya yazılmaz; yalnızca Coolify secret alanında tutulur.

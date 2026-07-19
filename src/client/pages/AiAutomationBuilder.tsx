@@ -91,7 +91,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">İşi bir çalışma arkadaşınıza anlatır gibi yazın. Zamanlama ve onay adımlarını birlikte hazırlayacağız.</p>
           </div>
           <div className="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
-            <ShieldCheck size={16} /> {mode === "advanced" && aiStatus?.mode === "openrouter_fallback" ? `${aiStatus.modelCount} yedekli AI modeli hazır` : "AI hazır ve güvenli"}
+            <ShieldCheck size={16} /> {mode === "advanced" && aiStatus?.mode === "managed_fallback" ? `${aiStatus.modelCount} yedekli AI modeli hazır` : "AI hazır ve güvenli"}
           </div>
         </div>
 

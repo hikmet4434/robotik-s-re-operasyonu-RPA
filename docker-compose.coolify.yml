@@ -14,6 +14,11 @@ services:
       OPENROUTER_MODEL_FALLBACK_1: ${OPENROUTER_MODEL_FALLBACK_1:-moonshotai/kimi-k3}
       OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2:-deepseek/deepseek-v4-pro}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/paas/v4}
+      ZAI_PLANNER_MODEL: ${ZAI_PLANNER_MODEL:-glm-5.2}
+      ZAI_VISION_MODEL: ${ZAI_VISION_MODEL:-glm-5v-turbo}
+      ZAI_OCR_MODEL: ${ZAI_OCR_MODEL:-glm-ocr}
     volumes:
       - otoflow_data:/app/data
     expose:

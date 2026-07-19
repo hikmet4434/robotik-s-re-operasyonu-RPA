@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -19,6 +20,21 @@ export interface AiPlanRequest {
 export interface AiRuntimeSettings extends AiSettings {
   apiKey?: string;
   models?: string[];
+  modelChain?: AiModelEndpoint[];
+}
+
+export interface AiModelEndpoint {
+  provider: "zai" | "openrouter" | "openai" | "ollama" | "custom";
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  label: string;
+}
+
+export interface GlmOcrResult {
+  text: string;
+  model: string;
+  providerLabel: string;
 }
 
 const allowedStepTypes = [
@@ -284,6 +300,55 @@ function safeParameters(raw: string): WorkflowStep["parameters"] {
   }
 }
 
+export function resolveModelEndpoints(settings: AiRuntimeSettings): AiModelEndpoint[] {
+  if (settings.modelChain?.length) {
+    return settings.modelChain.filter((item) => item.model.trim() && item.baseUrl.trim() && item.apiKey.trim());
+  }
+  if (settings.provider === "template") return [];
+  if (settings.provider !== "ollama" && !settings.apiKey) return [];
+  const provider = settings.provider === "openrouter" || settings.provider === "openai" || settings.provider === "ollama"
+    ? settings.provider
+    : "custom";
+  const label = provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : provider === "ollama" ? "Ollama" : "Özel LLM";
+  return (settings.models || [settings.model]).map((model) => ({
+    provider,
+    model,
+    baseUrl: settings.baseUrl,
+    apiKey: settings.apiKey || "ollama-local",
+    label: `${label} · ${model}`
+  }));
+}
+
+export async function extractDocumentTextWithGlmOcr(
+  input: { path: string; mimeType: string; sizeBytes: number },
+  settings: { apiKey?: string; baseUrl?: string; model?: string } = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<GlmOcrResult | undefined> {
+  const apiKey = settings.apiKey?.trim() || process.env.ZAI_API_KEY?.trim();
+  if (!apiKey) return undefined;
+  if (!new Set(["application/pdf", "image/png", "image/jpeg"]).has(input.mimeType)) return undefined;
+  if (input.sizeBytes > 10 * 1024 * 1024) throw new Error("GLM-OCR için dosya boyutu 10 MB sınırını aşıyor.");
+
+  const baseUrl = (settings.baseUrl || process.env.ZAI_BASE_URL || "https://api.z.ai/api/paas/v4").replace(/\/$/, "");
+  const model = settings.model || process.env.ZAI_OCR_MODEL || "glm-ocr";
+  const content = await fs.readFile(input.path);
+  const response = await fetchImpl(`${baseUrl}/layout_parsing`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      file: `data:${input.mimeType};base64,${content.toString("base64")}`,
+      return_crop_images: false,
+      need_layout_visualization: false
+    }),
+    signal: AbortSignal.timeout(90_000)
+  });
+  if (!response.ok) throw new Error(`GLM-OCR isteği başarısız oldu (HTTP ${response.status}).`);
+  const parsed = z.object({ md_results: z.string().min(1).max(2_000_000) }).safeParse(await response.json());
+  if (!parsed.success) throw new Error("GLM-OCR geçerli bir doküman metni döndürmedi.");
+  return { text: parsed.data.md_results, model, providerLabel: `Z.AI · ${model}` };
+}
+
 function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
   const directoryPath = input.directoryPath || path.join(os.homedir(), "Documents");
   const reportPath = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "haftalik-dosya-raporu.md");
@@ -369,18 +434,17 @@ function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
 
 export async function generateAutomationPlan(input: AiPlanRequest, settings: AiRuntimeSettings): Promise<AiAutomationPlan> {
   if (settings.provider === "template") return weeklyFilePlan(input);
-  if (settings.provider !== "ollama" && !settings.apiKey) throw new Error("Seçilen LLM sağlayıcısı için API anahtarı gerekli.");
-  if (!settings.model.trim()) throw new Error("LLM modeli seçilmedi.");
-
-  const provider = createOpenAICompatible({
-    name: "otoflowPlanner",
-    baseURL: settings.baseUrl,
-    apiKey: settings.apiKey || "ollama-local",
-    supportsStructuredOutputs: settings.provider !== "ollama"
-  });
-  const generated = await runWithModelFallback(settings.models || [settings.model], async (model) => {
+  const endpoints = resolveModelEndpoints(settings);
+  if (endpoints.length === 0) throw new Error("Otomasyon planlayıcısı için geçerli bir LLM bağlantısı bulunamadı.");
+  const generated = await runWithModelEndpointFallback(endpoints, async (endpoint) => {
+    const provider = createOpenAICompatible({
+      name: `otoflow-${endpoint.provider}`,
+      baseURL: endpoint.baseUrl,
+      apiKey: endpoint.apiKey,
+      supportsStructuredOutputs: endpoint.provider !== "ollama"
+    });
     const result = await generateText({
-      model: provider(model),
+      model: provider(endpoint.model),
       output: Output.json(),
       system: [
         "Sen OtoFlow için güvenli bir RPA workflow mimarısın.",
@@ -406,7 +470,7 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
     source: "ai",
     schedule: { enabled: false, cron: input.cron || "0 9 * * 1", timezone: input.timezone || "Europe/Istanbul", label: input.scheduleLabel || "Manuel" },
     assumptions: output.assumptions,
-    providerLabel: `OpenRouter · ${generated.model}`,
+    providerLabel: generated.endpoint.label,
     steps: output.steps.map((step) => ({
       id: stepId(),
       type: step.type,
@@ -435,12 +499,13 @@ export async function summarizeFilesWithLlm(
   settings: AiRuntimeSettings
 ) {
   if (files.length === 0 || settings.provider === "template") return buildHeuristicSummary(files);
-  if (settings.provider !== "ollama" && !settings.apiKey) return buildHeuristicSummary(files);
-  const provider = createOpenAICompatible({ name: "otoflowSummary", baseURL: settings.baseUrl, apiKey: settings.apiKey || "ollama-local" });
+  const endpoints = resolveModelEndpoints(settings);
+  if (endpoints.length === 0) return buildHeuristicSummary(files);
   const source = files.slice(0, 80).map((file) => ({ ...file, excerpt: file.excerpt?.slice(0, 1800) }));
-  const generated = await runWithModelFallback(settings.models || [settings.model], async (model) => {
+  const generated = await runWithModelEndpointFallback(endpoints, async (endpoint) => {
+    const provider = createOpenAICompatible({ name: `otoflow-summary-${endpoint.provider}`, baseURL: endpoint.baseUrl, apiKey: endpoint.apiKey });
     const { text } = await generateText({
-      model: provider(model),
+      model: provider(endpoint.model),
       system: "Dosya içeriklerinden kısa, somut ve Türkçe haftalık çalışma özeti üret. Gizli bilgi tahmin etme. Her dosyayı ayrı madde yap.",
       prompt: `${prompt || "Yeni ve değişen dosyaları özetle."}\n\n${JSON.stringify(source)}`
     });
@@ -450,20 +515,36 @@ export async function summarizeFilesWithLlm(
   return generated.value;
 }
 
-export async function runWithModelFallback<T>(models: string[], operation: (model: string) => Promise<T>) {
-  const candidates = [...new Set(models.map((model) => model.trim()).filter(Boolean))];
-  if (candidates.length === 0) throw new Error("OpenRouter model zinciri yapılandırılmamış.");
+export async function runWithModelEndpointFallback<T>(endpoints: AiModelEndpoint[], operation: (endpoint: AiModelEndpoint) => Promise<T>) {
+  const candidates = [...new Map(
+    endpoints
+      .filter((endpoint) => endpoint.model.trim() && endpoint.baseUrl.trim() && endpoint.apiKey.trim())
+      .map((endpoint) => [`${endpoint.baseUrl}|${endpoint.model}`, endpoint])
+  ).values()];
+  if (candidates.length === 0) throw new Error("LLM model zinciri yapılandırılmamış.");
   const failures: string[] = [];
-  for (const model of candidates) {
+  for (const endpoint of candidates) {
     try {
-      return { value: await operation(model), model };
+      return { value: await operation(endpoint), endpoint };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Bilinmeyen model hatası";
       const safeMessage = error instanceof z.ZodError
         ? "Model yanıtı çalıştırılabilir otomasyon planına dönüştürülemedi."
         : /(api[_ -]?key|authorization|token|secret)/i.test(message) ? "Kimlik doğrulama hatası." : message.slice(0, 180);
-      failures.push(`${model}: ${safeMessage}`);
+      failures.push(`${endpoint.label}: ${safeMessage}`);
     }
   }
-  throw new Error(`OpenRouter model zincirindeki tüm modeller başarısız oldu. ${failures.join(" | ")}`);
+  throw new Error(`LLM model zincirindeki tüm modeller başarısız oldu. ${failures.join(" | ")}`);
+}
+
+export async function runWithModelFallback<T>(models: string[], operation: (model: string) => Promise<T>) {
+  const endpoints: AiModelEndpoint[] = models.map((model) => ({
+    provider: "openrouter",
+    model,
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "compatibility-test-key",
+    label: model
+  }));
+  const result = await runWithModelEndpointFallback(endpoints, (endpoint) => operation(endpoint.model));
+  return { value: result.value, model: result.endpoint.model };
 }

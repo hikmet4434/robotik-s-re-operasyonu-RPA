@@ -105,6 +105,8 @@ export interface UploadedDocumentInput {
   mimeType: string;
   sizeBytes: number;
   type: DocumentRecord["type"];
+  extractedText?: string;
+  extractionProvider?: string;
 }
 
 function seedState(): SaasState {
@@ -860,21 +862,47 @@ export function getAiSettings(): AiSettings {
 }
 
 export function getAiRuntimeSettings() {
+  const zaiApiKey = process.env.ZAI_API_KEY?.trim();
   const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (openRouterApiKey) {
-    const models = [
-      process.env.OPENROUTER_MODEL_PRIMARY || "z-ai/glm-5.2",
-      process.env.OPENROUTER_MODEL_FALLBACK_1 || "moonshotai/kimi-k3",
-      process.env.OPENROUTER_MODEL_FALLBACK_2 || "deepseek/deepseek-v4-pro"
+  if (zaiApiKey || openRouterApiKey) {
+    const zaiBaseUrl = (process.env.ZAI_BASE_URL || "https://api.z.ai/api/paas/v4").replace(/\/$/, "");
+    const openRouterBaseUrl = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, "");
+    const openRouterModels = zaiApiKey
+      ? [
+          process.env.OPENROUTER_MODEL_FALLBACK_1 || "moonshotai/kimi-k3",
+          process.env.OPENROUTER_MODEL_FALLBACK_2 || "deepseek/deepseek-v4-pro"
+        ]
+      : [
+          process.env.OPENROUTER_MODEL_PRIMARY || "z-ai/glm-5.2",
+          process.env.OPENROUTER_MODEL_FALLBACK_1 || "moonshotai/kimi-k3",
+          process.env.OPENROUTER_MODEL_FALLBACK_2 || "deepseek/deepseek-v4-pro"
+        ];
+    const modelChain = [
+      ...(zaiApiKey ? [{
+        provider: "zai" as const,
+        model: process.env.ZAI_PLANNER_MODEL || "glm-5.2",
+        baseUrl: zaiBaseUrl,
+        apiKey: zaiApiKey,
+        label: `Z.AI · ${process.env.ZAI_PLANNER_MODEL || "glm-5.2"}`
+      }] : []),
+      ...(openRouterApiKey ? openRouterModels.map((model) => ({
+        provider: "openrouter" as const,
+        model,
+        baseUrl: openRouterBaseUrl,
+        apiKey: openRouterApiKey,
+        label: `OpenRouter · ${model}`
+      })) : [])
     ];
+    const primary = modelChain[0];
     return {
-      provider: "openrouter" as const,
-      model: models[0],
-      models,
-      baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
+      provider: primary.provider === "openrouter" ? "openrouter" as const : "custom" as const,
+      model: primary.model,
+      models: modelChain.map((candidate) => candidate.model),
+      modelChain,
+      baseUrl: primary.baseUrl,
       hasApiKey: true,
       updatedAt: now(),
-      apiKey: openRouterApiKey
+      apiKey: primary.apiKey
     };
   }
   const settings = readState().llmSettings!;
@@ -1320,12 +1348,13 @@ export function extractUploadedDocument(input: UploadedDocumentInput) {
     });
   }
 
-  audit(state, "ai", `${document.name} gerçek dosyadan işlendi; kaynak=${input.mimeType}.`, "document", document.id);
+  audit(state, "ai", `${document.name} gerçek dosyadan işlendi; kaynak=${input.mimeType}${input.extractionProvider ? `, sağlayıcı=${input.extractionProvider}` : ""}.`, "document", document.id);
   writeState(state);
   return document;
 }
 
 function readExtractableText(input: UploadedDocumentInput) {
+  if (input.extractedText?.trim()) return input.extractedText.trim().slice(0, 2_000_000);
   if (!textLikeMimePattern.test(input.mimeType)) {
     return "";
   }
@@ -1341,7 +1370,7 @@ function buildFieldsFromUploadedDocument(input: UploadedDocumentInput, text: str
   const normalized = text.replace(/\r/g, "\n");
   const isTextExtracted = normalized.trim().length > 0;
   const fallbackConfidence = isTextExtracted ? 68 : 42;
-  const sourceLabel = isTextExtracted ? "Metinden çıkarıldı" : "OCR bekliyor";
+  const sourceLabel = input.extractionProvider ? `${input.extractionProvider} ile çıkarıldı` : isTextExtracted ? "Metinden çıkarıldı" : "OCR bekliyor";
   const fields: import("../shared/saasTypes").SaasExtractedField[] = [
     makeExtractedField("party", "Taraf", extractParty(normalized) ?? `${sourceLabel}: ${input.originalName}`, isTextExtracted ? 82 : fallbackConfidence),
     makeExtractedField("amount", "Tutar", extractAmount(normalized) ?? "Doğrulama gerekli", extractAmount(normalized) ? 86 : fallbackConfidence),
