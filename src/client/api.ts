@@ -11,6 +11,7 @@ import type {
   ConnectorAccount,
   DocumentRecord,
   Job,
+  JobRunLog,
   RecorderEvent,
   RecordingSession,
   SaasDashboard,
@@ -63,8 +64,11 @@ export const api = {
     if (!response.ok) throw new Error("Otomasyon dosyası indirilemedi.");
     return { blob: await response.blob(), disposition: response.headers.get("content-disposition") };
   },
-  runWorkflow: (id: string, payloadSummary: string) =>
-    request<Job>(`/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ payloadSummary }) }),
+  runWorkflow: async (id: string, payloadSummary: string) => {
+    const job = await request<Job>(`/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ payloadSummary }) });
+    window.dispatchEvent(new CustomEvent("otoflow:job-started", { detail: { jobId: job.id } }));
+    return job;
+  },
   publishWorkflow: (id: string) => request<Workflow>(`/api/workflows/${id}/publish`, { method: "POST", body: "{}" }),
   aiSettings: () => request<AiSettings>("/api/ai/settings"),
   aiStatus: () => request<AiRuntimeStatus>("/api/ai/status"),
@@ -73,7 +77,7 @@ export const api = {
   generateAiAutomation: (body: { prompt: string; directoryPath?: string; reportPath?: string; cron?: string; timezone?: string; scheduleLabel?: string; approvalAtEnd?: boolean }) =>
     request<AiAutomationPlan>("/api/ai/automation-plan", { method: "POST", body: JSON.stringify(body) }),
   createAiWorkflow: (body: AiAutomationPlan) => request<Workflow>("/api/ai/workflows", { method: "POST", body: JSON.stringify(body) }),
-  jobs: () => request<Array<Job & { logs: unknown[]; workflow?: Workflow }>>("/api/jobs"),
+  jobs: () => request<Array<Job & { logs: JobRunLog[]; workflow?: Workflow }>>("/api/jobs"),
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }),
   retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: "POST", body: "{}" }),
   approvals: () => request<ApprovalTask[]>("/api/approvals"),

@@ -16,6 +16,20 @@ body {
   margin: 0;
 }
 
+@keyframes activity-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes activity-scan {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(520%); }
+}
+
+@keyframes activity-signal {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(45, 212, 191, 0); }
+}
+
 button,
 input,
 select,
@@ -74,5 +88,85 @@ textarea {
 
   .table-cell {
     @apply border-b border-line px-4 py-3 text-sm;
+  }
+
+  .automation-activity {
+    @apply relative overflow-hidden border-b border-slate-700 bg-[#12242a] text-white shadow-lg;
+  }
+
+  .automation-activity-inner {
+    @apply mx-auto flex min-h-14 w-full max-w-7xl items-center gap-3 px-4 md:px-8;
+  }
+
+  .activity-signal {
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-teal-400 text-[#102a2e];
+    animation: activity-signal 1.8s ease-in-out infinite;
+  }
+
+  .activity-status-icon {
+    @apply text-teal-300;
+  }
+
+  .activity-spinner {
+    animation: activity-spin 1.15s linear infinite;
+  }
+
+  .activity-percentage {
+    @apply min-w-10 text-right font-mono text-sm font-bold text-teal-200;
+  }
+
+  .activity-detail-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-600 text-slate-200 transition hover:border-teal-300 hover:text-teal-200;
+  }
+
+  .activity-progress-track {
+    @apply relative h-1 overflow-hidden bg-slate-700;
+  }
+
+  .activity-progress-fill {
+    @apply absolute inset-y-0 left-0 bg-teal-400;
+    transition: width 650ms cubic-bezier(0.22, 1, 0.36, 1), background-color 200ms ease;
+  }
+
+  .activity-progress-scan {
+    @apply absolute inset-y-0 left-0 w-1/4 bg-white/70;
+    animation: activity-scan 2.2s linear infinite;
+  }
+
+  .automation-activity[data-status="waiting_approval"] .activity-progress-fill,
+  .automation-activity[data-status="waiting_approval"] .activity-signal {
+    @apply bg-amber-400;
+  }
+
+  .automation-activity[data-status="waiting_approval"] .activity-status-icon,
+  .automation-activity[data-status="waiting_approval"] .activity-percentage {
+    @apply text-amber-200;
+  }
+
+  .automation-activity[data-status="succeeded"] .activity-progress-fill,
+  .automation-activity[data-status="succeeded"] .activity-signal {
+    @apply bg-emerald-400;
+  }
+
+  .automation-activity[data-status="failed"] .activity-progress-fill,
+  .automation-activity[data-status="failed"] .activity-signal,
+  .automation-activity[data-status="cancelled"] .activity-progress-fill,
+  .automation-activity[data-status="cancelled"] .activity-signal {
+    @apply bg-red-400;
+  }
+
+  .automation-activity[data-status="failed"] .activity-status-icon,
+  .automation-activity[data-status="failed"] .activity-percentage,
+  .automation-activity[data-status="cancelled"] .activity-status-icon,
+  .automation-activity[data-status="cancelled"] .activity-percentage {
+    @apply text-red-200;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-signal,
+  .activity-spinner,
+  .activity-progress-scan {
+    animation: none;
   }
 }

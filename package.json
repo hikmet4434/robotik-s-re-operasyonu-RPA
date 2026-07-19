@@ -12,6 +12,7 @@
     "setup:agent": "npm --prefix agents/local-agent install",
     "build": "tsc --noEmit && vite build && node scripts/build-sites-worker.mjs",
     "test:llm-fallback": "tsx tests/llm-fallback.test.ts",
+    "test:job-progress": "tsx tests/job-progress.test.ts",
     "test:production-assets": "node tests/production-assets.test.mjs",
     "test:capabilities": "node tests/uipath-capabilities.test.mjs",
     "prisma:generate": "prisma generate",

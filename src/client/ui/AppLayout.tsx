@@ -2,6 +2,7 @@ import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Rad
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { AutomationActivityBar } from "./AutomationActivityBar";
 import { useExperienceMode } from "./ExperienceMode";
 
 const links = [
@@ -67,28 +68,31 @@ export function AppLayout() {
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-line bg-white/95 px-4 backdrop-blur md:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <Route className="hidden text-brand sm:block" size={20} />
-            <div>
-              <div className="text-sm font-semibold text-ink">OtoFlow Çalışma Alanı</div>
-              <div className="hidden text-xs text-muted sm:block">Otomasyonlarınız ve bekleyen işleriniz</div>
+        <div className="sticky top-0 z-10">
+          <header className="flex h-16 items-center justify-between border-b border-line bg-white/95 px-4 backdrop-blur md:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <Route className="hidden text-brand sm:block" size={20} />
+              <div>
+                <div className="text-sm font-semibold text-ink"><span className="sm:hidden">OtoFlow</span><span className="hidden sm:inline">OtoFlow Çalışma Alanı</span></div>
+                <div className="hidden text-xs text-muted sm:block">Otomasyonlarınız ve bekleyen işleriniz</div>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="inline-flex rounded-md border border-line bg-slate-50 p-1" aria-label="Görünüm seçimi">
-              <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "simple" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("simple")} aria-pressed={mode === "simple"}>Sade</button>
-              <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "advanced" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("advanced")} aria-pressed={mode === "advanced"}><Settings2 className="mr-1 inline" size={13} />Gelişmiş</button>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex rounded-md border border-line bg-slate-50 p-1" aria-label="Görünüm seçimi">
+                <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "simple" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("simple")} aria-pressed={mode === "simple"}>Sade</button>
+                <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "advanced" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("advanced")} aria-pressed={mode === "advanced"}><Settings2 className="mr-1 inline" size={13} />Gelişmiş</button>
+              </div>
+              <div className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200 md:block">
+                E-imza/PIN saklama kapalı
+              </div>
+              <button className="relative hidden sm:inline-flex icon-button" title="Bekleyen onaylar">
+                <Bell size={19} />
+                {pending > 0 ? <span className="notification-count">{pending}</span> : null}
+              </button>
             </div>
-            <div className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200 md:block">
-              E-imza/PIN saklama kapalı
-            </div>
-            <button className="relative icon-button" title="Bekleyen onaylar">
-              <Bell size={19} />
-              {pending > 0 ? <span className="notification-count">{pending}</span> : null}
-            </button>
-          </div>
-        </header>
+          </header>
+          <AutomationActivityBar />
+        </div>
         <main className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 md:px-8 lg:pb-6">
           <Outlet />
         </main>
