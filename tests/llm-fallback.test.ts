@@ -2,7 +2,69 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runWithModelFallback } from "../src/server/aiAutomation";
+import { normalizeGeneratedPlan, runWithModelFallback } from "../src/server/aiAutomation";
+
+const request = {
+  prompt: "Her hafta yeni dosyaları incele, özetle ve pazartesi rapor hazırla.",
+  scheduleLabel: "Her pazartesi 09:00"
+};
+
+const glmPlan = normalizeGeneratedPlan({
+  workflow: {
+    title: "Haftalık dosya özeti",
+    description: "Yeni dosyaları inceleyerek haftalık bir çalışma raporu hazırlar.",
+    trigger: "Her pazartesi 09:00",
+    actions: [{
+      actionType: "files.scan",
+      name: "Yeni dosyaları tara",
+      details: "Son yedi gündeki dosyaları listeler.",
+      risk_level: "düşük",
+      parameters: { lookbackDays: 7 }
+    }]
+  }
+}, request);
+assert.equal(glmPlan.name, "Haftalık dosya özeti");
+assert.equal(glmPlan.category, "operasyon");
+assert.equal(glmPlan.steps[0].type, "files.scan");
+assert.equal(glmPlan.steps[0].parameterJson, JSON.stringify({ lookbackDays: 7 }));
+
+const kimiPlan = normalizeGeneratedPlan({
+  name: "Fatura kontrolü",
+  summary: "Yeni faturaları kontrol eder ve onay için kullanıcıya sunar.",
+  actions: [{
+    type: "approval",
+    title: "Faturayı onaylat",
+    instruction: "Finans sorumlusunun onayını bekler.",
+    approval_required: "evet"
+  }]
+}, { prompt: "Yeni faturaları finans ekibi için kontrol et." });
+assert.equal(kimiPlan.category, "finans");
+assert.equal(kimiPlan.steps[0].type, "approval.wait");
+assert.equal(kimiPlan.steps[0].requiresApproval, true);
+
+const deepSeekPlan = normalizeGeneratedPlan(`\`\`\`json
+{
+  "output": {
+    "description": "Müşteri tekliflerini CRM sisteminde düzenli olarak işler.",
+    "schedule": { "label": "Her iş günü" },
+    "workflow_steps": [{
+      "action": "click",
+      "label": "Teklifler menüsüne tıkla",
+      "description": "CRM içindeki teklifler menüsünü açar.",
+      "parameters": { "selector": "#offers" }
+    }]
+  }
+}
+\`\`\``, { prompt: "CRM tekliflerini işle." });
+assert.equal(deepSeekPlan.name, "CRM tekliflerini işle");
+assert.equal(deepSeekPlan.category, "satış");
+assert.equal(deepSeekPlan.trigger, "Her iş günü");
+assert.equal(deepSeekPlan.steps[0].type, "browser.click");
+
+assert.throws(
+  () => normalizeGeneratedPlan({ name: "Eksik plan", description: "Hiç adımı olmayan plan." }, request),
+  /too_small|at least 1/i
+);
 
 const models = ["z-ai/glm-5.2", "moonshotai/kimi-k3", "deepseek/deepseek-v4-pro"];
 const attempts: string[] = [];
