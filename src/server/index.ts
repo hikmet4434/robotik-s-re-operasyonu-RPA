@@ -97,14 +97,20 @@ function cryptoSafeName(value: string) {
 }
 
 const allowedOrigins = new Set((process.env.CORS_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean));
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || process.env.NODE_ENV !== "production" || allowedOrigins.has(origin)) {
-      callback(null, true);
-      return;
+app.use(cors((req, callback) => {
+  const origin = req.header("origin");
+  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0].trim();
+  const requestHost = forwardedHost || req.header("host");
+  let sameOrigin = false;
+  if (origin && requestHost) {
+    try {
+      sameOrigin = new URL(origin).host === requestHost;
+    } catch {
+      sameOrigin = false;
     }
-    callback(new Error("Bu arayüz kaynağına CORS izni verilmemiş."));
   }
+  const permitted = !origin || process.env.NODE_ENV !== "production" || sameOrigin || allowedOrigins.has(origin);
+  callback(permitted ? null : new Error("Bu arayüz kaynağına CORS izni verilmemiş."), { origin: permitted });
 }));
 app.use(express.json({ limit: "2mb" }));
 
