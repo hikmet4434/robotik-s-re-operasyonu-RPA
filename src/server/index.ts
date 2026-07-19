@@ -1,4 +1,5 @@
 import cors from "cors";
+import crypto from "node:crypto";
 import express from "express";
 import multer from "multer";
 import path from "node:path";
@@ -12,6 +13,8 @@ import {
   cancelJob,
   analyzeRecording,
   appendRecordingEvent,
+  attachRecordingVideo,
+  completeAgentStep,
   createConnector,
   createOpportunity,
   createPolicy,
@@ -19,10 +22,16 @@ import {
   createQueueItem,
   extractDocument,
   extractUploadedDocument,
+  exportAutomationPackage,
+  failAgentStep,
   getCurrentContext,
   getDashboard,
   getWorkflows,
+  heartbeatLocalAgent,
+  importAutomationPackage,
+  leaseNextAgentStep,
   listCompliance,
+  listCredentialProfiles,
   listJobs,
   listQueues,
   listRecordings,
@@ -30,13 +39,17 @@ import {
   publishWorkflow,
   resolveApproval,
   runWorkflow,
+  updateAutomationDraft,
+  updateWorkflowConfiguration,
   updateDocumentField
 } from "./saasStore";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4100);
 const uploadDir = path.resolve(process.cwd(), "data", "uploads");
+const recordingDir = path.resolve(process.cwd(), "data", "recordings");
 fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(recordingDir, { recursive: true });
 
 const allowedUploadTypes = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv", "application/json"]);
 const upload = multer({
@@ -57,6 +70,18 @@ const upload = multer({
   }
 });
 
+const recordingUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, recordingDir),
+    filename: (req, file, cb) => {
+      const ext = file.mimetype === "video/mp4" ? ".mp4" : ".webm";
+      cb(null, `${cryptoSafeName(String(req.params.id))}-${Date.now()}${ext}`);
+    }
+  }),
+  limits: { fileSize: 150 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, ["video/webm", "video/mp4"].includes(file.mimetype))
+});
+
 function cryptoSafeName(value: string) {
   return value
     .normalize("NFKD")
@@ -65,8 +90,63 @@ function cryptoSafeName(value: string) {
     .slice(0, 80) || "document";
 }
 
-app.use(cors());
+const allowedOrigins = new Set((process.env.CORS_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || process.env.NODE_ENV !== "production" || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Bu arayüz kaynağına CORS izni verilmemiş."));
+  }
+}));
 app.use(express.json({ limit: "2mb" }));
+
+const workflowStepSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum([
+    "browser.navigate", "browser.click", "browser.type", "browser.select", "browser.wait", "browser.extract",
+    "desktop.launch", "desktop.click", "desktop.type", "desktop.hotkey", "desktop.wait",
+    "http.request", "document.extract", "approval.wait", "email.draft", "email.send_after_approval",
+    "table.append", "condition", "webhook.emit"
+  ]),
+  title: z.string().min(2).max(160),
+  description: z.string().min(2).max(800),
+  requiresApproval: z.boolean(),
+  riskLevel: z.enum(["low", "medium", "high", "critical"]),
+  approvalPrompt: z.string().max(500).optional(),
+  credentialId: z.string().optional(),
+  parameters: z.object({
+    url: z.string().max(2048).optional(),
+    selector: z.string().max(1000).optional(),
+    value: z.string().max(10000).optional(),
+    option: z.string().max(1000).optional(),
+    appName: z.string().max(160).optional(),
+    x: z.number().int().min(0).max(20000).optional(),
+    y: z.number().int().min(0).max(20000).optional(),
+    keys: z.array(z.string().max(30)).max(8).optional(),
+    timeoutMs: z.number().int().min(0).max(120000).optional(),
+    credentialField: z.enum(["username", "password"]).optional(),
+    outputKey: z.string().max(160).optional()
+  }).optional()
+});
+
+function requireLocalAgent(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const configured = process.env.OTOFLOW_AGENT_TOKEN;
+  if (!configured && process.env.NODE_ENV === "production") {
+    res.status(503).json({ error: "OTOFLOW_AGENT_TOKEN üretim ortamında zorunludur." });
+    return;
+  }
+  const expected = configured || "otoflow-local-dev-agent";
+  const received = req.header("x-otoflow-agent-token") || "";
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  if (expectedBuffer.length !== receivedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)) {
+    res.status(401).json({ error: "Yerel ajan anahtarı geçersiz." });
+    return;
+  }
+  next();
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "OtoFlow AI API" });
@@ -211,6 +291,28 @@ app.post("/api/recordings/:id/events", (req, res) => {
   }
 });
 
+app.post("/api/recordings/:id/video", recordingUpload.single("video"), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: "WEBM veya MP4 ekran kaydı gerekli." });
+    return;
+  }
+  try {
+    res.status(201).json(attachRecordingVideo(String(req.params.id), { fileName: req.file.filename, mimeType: req.file.mimetype, sizeBytes: req.file.size }));
+  } catch (error) {
+    fs.unlinkSync(req.file.path);
+    res.status(404).json({ error: error instanceof Error ? error.message : "Ekran kaydı ilişkilendirilemedi." });
+  }
+});
+
+app.get("/api/recordings/:id/video", (req, res) => {
+  const session = listRecordings().find((item) => item.id === req.params.id);
+  if (!session?.videoFileName) {
+    res.status(404).json({ error: "Ekran kaydı bulunamadı." });
+    return;
+  }
+  res.type(session.videoMimeType || "video/webm").sendFile(path.join(recordingDir, path.basename(session.videoFileName)));
+});
+
 app.post("/api/recordings/:id/analyze", (req, res) => {
   try {
     res.json(analyzeRecording(req.params.id));
@@ -227,8 +329,76 @@ app.post("/api/automation-drafts/:id/publish", (req, res) => {
   }
 });
 
+app.patch("/api/automation-drafts/:id", (req, res) => {
+  const schema = z.object({
+    steps: z.array(workflowStepSchema).min(1).max(250),
+    credentialId: z.string().optional(),
+    title: z.string().min(3).max(160).optional(),
+    objective: z.string().min(8).max(1200).optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(updateAutomationDraft(req.params.id, parsed.data));
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : "Taslak güncellenemedi." });
+  }
+});
+
 app.post("/api/workflows", (_req, res) => {
   res.status(501).json({ error: "Yeni workflow builder UI ikinci iterasyonda açılacak; hazır şablonlar bu sürümde kullanılabilir." });
+});
+
+app.get("/api/workflows/:id/export", (req, res) => {
+  try {
+    const pkg = exportAutomationPackage(req.params.id);
+    const fileName = `${cryptoSafeName(pkg.metadata.name)}.otomasyon`;
+    res.setHeader("Content-Type", "application/vnd.otoflow.automation+json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(JSON.stringify(pkg, null, 2));
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : "Otomasyon dışa aktarılamadı." });
+  }
+});
+
+app.post("/api/workflows/import", (req, res) => {
+  const packageSchema = z.object({
+    format: z.literal("otoflow.automation"),
+    version: z.literal(1),
+    exportedAt: z.string(),
+    metadata: z.object({
+      name: z.string().min(3).max(160),
+      description: z.string().min(3).max(1200),
+      category: z.enum(["finans", "operasyon", "gümrük", "satış", "genel"]),
+      trigger: z.string().min(2).max(300)
+    }),
+    steps: z.array(workflowStepSchema).min(1).max(250),
+    variables: z.array(z.object({ key: z.string(), label: z.string(), example: z.string(), source: z.string() })).max(100),
+    requiredCredential: z.object({ alias: z.literal("primary"), label: z.string(), loginUrl: z.string().optional() }).optional()
+  });
+  const parsed = packageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Geçersiz veya desteklenmeyen .otomasyon dosyası.", details: parsed.error.flatten() });
+    return;
+  }
+  res.status(201).json(importAutomationPackage(parsed.data));
+});
+
+app.patch("/api/workflows/:id", (req, res) => {
+  const schema = z.object({ steps: z.array(workflowStepSchema).min(1).max(250).optional(), credentialId: z.string().optional(), publish: z.boolean().optional() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(updateWorkflowConfiguration(req.params.id, parsed.data));
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : "Workflow ayarlanamadı." });
+  }
 });
 
 app.post("/api/workflows/:id/publish", (req, res) => {
@@ -271,6 +441,57 @@ app.post("/api/jobs/:id/cancel", (req, res) => {
     res.json(cancelJob(req.params.id));
   } catch (error) {
     res.status(404).json({ error: error instanceof Error ? error.message : "Job iptal edilemedi." });
+  }
+});
+
+app.post("/api/agent/heartbeat", requireLocalAgent, (req, res) => {
+  const schema = z.object({ name: z.string().min(2).max(120).optional(), platform: z.string().max(120).optional() });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  res.json(heartbeatLocalAgent(parsed.data));
+});
+
+app.post("/api/agent/next-step", requireLocalAgent, (_req, res) => {
+  try {
+    const lease = leaseNextAgentStep();
+    if (!lease) {
+      res.status(204).end();
+      return;
+    }
+    res.json(lease);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Ajan adımı alınamadı." });
+  }
+});
+
+app.post("/api/agent/jobs/:id/steps/:stepIndex/complete", requireLocalAgent, (req, res) => {
+  const schema = z.object({ summary: z.string().max(500).optional() });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(completeAgentStep({ jobId: String(req.params.id), stepIndex: Number(req.params.stepIndex), summary: parsed.data.summary }));
+  } catch (error) {
+    res.status(409).json({ error: error instanceof Error ? error.message : "Adım tamamlanamadı." });
+  }
+});
+
+app.post("/api/agent/jobs/:id/steps/:stepIndex/fail", requireLocalAgent, (req, res) => {
+  const schema = z.object({ error: z.string().min(1).max(1000) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(failAgentStep({ jobId: String(req.params.id), stepIndex: Number(req.params.stepIndex), error: parsed.data.error }));
+  } catch (error) {
+    res.status(409).json({ error: error instanceof Error ? error.message : "Adım hatası işlenemedi." });
   }
 });
 
@@ -394,12 +615,19 @@ app.get("/api/connectors", (_req, res) => {
   res.json(getDashboard().connectors);
 });
 
+app.get("/api/credentials", (_req, res) => {
+  res.json(listCredentialProfiles());
+});
+
 app.post("/api/connectors", (req, res) => {
   const schema = z.object({
     type: z.enum(["email", "google_sheets", "webhook", "portal", "csv"]),
-    name: z.string().min(2),
-    secret: z.string().min(3)
-  });
+    name: z.string().min(2).max(120),
+    secret: z.string().min(3).max(10000).optional(),
+    username: z.string().max(320).optional(),
+    password: z.string().max(10000).optional(),
+    loginUrl: z.union([z.string().url(), z.literal("")]).optional()
+  }).refine((value) => Boolean(value.secret || value.username || value.password), { message: "Kullanıcı adı/şifre veya secret gerekli." });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -592,7 +820,8 @@ app.use((error: unknown, _req: express.Request, res: express.Response, next: exp
     return;
   }
   if (error instanceof multer.MulterError) {
-    res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Dosya boyutu 10MB sınırını aşamaz." : error.message });
+    const limitMessage = error.field === "video" ? "Ekran kaydı 150MB sınırını aşamaz." : "Dosya boyutu 10MB sınırını aşamaz.";
+    res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE" ? limitMessage : error.message });
     return;
   }
   if (error instanceof Error) {

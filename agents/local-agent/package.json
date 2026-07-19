@@ -7,5 +7,7 @@
     "start": "node src/index.js",
     "demo:event": "node src/index.js --demo-event"
   },
-  "dependencies": {}
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  }
 }

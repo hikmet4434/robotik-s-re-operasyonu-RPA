@@ -1,7 +1,10 @@
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Bot,
   CheckCircle2,
+  Download,
   FileSearch,
   Gauge,
   GitBranch,
@@ -12,10 +15,12 @@ import {
   Plus,
   Radio,
   ScreenShare,
+  Save,
   ShieldCheck,
   Sparkles,
   Table2,
   TimerReset,
+  Trash2,
   Upload
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -23,14 +28,17 @@ import { useLocation } from "react-router-dom";
 import type {
   ApprovalTask,
   AutomationDraft,
+  AutomationPackage,
   AutomationOpportunity,
   ConnectorAccount,
+  CredentialProfile,
   DocumentRecord,
   Job,
   RecorderEvent,
   RecordingSession,
   SaasDashboard,
-  Workflow
+  Workflow,
+  WorkflowStep
 } from "../../shared/saasTypes";
 import { api } from "../api";
 import { formatDate, formatNumber } from "../utils";
@@ -78,6 +86,12 @@ export function DashboardPage() {
     setActiveTab(byPath[location.pathname] ?? "dashboard");
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!["jobs", "approvals"].includes(activeTab)) return;
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(timer);
+  }, [activeTab]);
+
   async function runWorkflow(workflow: Workflow) {
     setMessage(null);
     try {
@@ -115,8 +129,8 @@ export function DashboardPage() {
       {message ? <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">{message}</div> : null}
 
       {activeTab === "dashboard" ? <Overview data={data} setTab={setActiveTab} /> : null}
-      {activeTab === "recorder" ? <RecorderStudio refreshDashboard={refresh} /> : null}
-      {activeTab === "workflows" ? <Workflows data={data} onRun={runWorkflow} /> : null}
+      {activeTab === "recorder" ? <RecorderStudio data={data} refreshDashboard={refresh} /> : null}
+      {activeTab === "workflows" ? <Workflows data={data} onRun={runWorkflow} refresh={refresh} setMessage={setMessage} /> : null}
       {activeTab === "jobs" ? <Jobs data={data} refresh={refresh} /> : null}
       {activeTab === "approvals" ? <Approvals data={data} onResolve={approve} /> : null}
       {activeTab === "documents" ? <Documents data={data} refresh={refresh} /> : null}
@@ -127,7 +141,7 @@ export function DashboardPage() {
   );
 }
 
-function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<void> }) {
+function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refreshDashboard: () => Promise<void> }) {
   const [title, setTitle] = useState("Günlük rapor indir ve e-posta hazırla");
   const [goal, setGoal] = useState("Portala gir, günlük satış raporunu filtrele, raporu indir, e-postaları özetle ve müşteriye onaylı e-posta taslağı hazırla.");
   const [appName, setAppName] = useState("Demo Portal + E-posta");
@@ -138,7 +152,13 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
   const [screenStatus, setScreenStatus] = useState<"idle" | "recording" | "captured" | "unsupported">("idle");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [agentOnline, setAgentOnline] = useState(false);
+  const [desktopRecording, setDesktopRecording] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.localAgentHealth().then(() => setAgentOnline(true)).catch(() => setAgentOnline(false));
+  }, []);
 
   async function startSession() {
     const created = await api.createRecording({ title, goal, appName });
@@ -171,11 +191,18 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
     const chunks: BlobPart[] = [];
     const recorder = new MediaRecorder(stream);
     recorder.ondataavailable = (event) => chunks.push(event.data);
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       stream.getTracks().forEach((track) => track.stop());
       const blob = new Blob(chunks, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
       setScreenStatus("captured");
+      try {
+        const updated = await api.uploadRecordingVideo(session.id, blob);
+        setSession(updated);
+        setMessage("Ekran kaydı iş oturumuna kaydedildi.");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Ekran kaydı sunucuya yüklenemedi.");
+      }
     };
     recorder.start();
     setMediaRecorder(recorder);
@@ -190,6 +217,36 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
     await capture({ type: "screen.stop", label: "Ekran kaydı durdu", target: "screen", appArea: "Recorder", value: "captured", selectorHint: "display-media" });
   }
 
+  async function startDesktopRecording() {
+    if (!session) {
+      setMessage("Masaüstü kaydı için önce iş kaydını başlat.");
+      return;
+    }
+    try {
+      await api.startDesktopRecording(session.id);
+      setDesktopRecording(true);
+      setAgentOnline(true);
+      setMessage("Masaüstü tıklama kaydı başladı. macOS Erişilebilirlik izni istenirse izin verin.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Masaüstü kaydı başlatılamadı.");
+    }
+  }
+
+  async function stopDesktopRecording() {
+    try {
+      await api.stopDesktopRecording();
+      setDesktopRecording(false);
+      if (session) {
+        const recordings = await api.recordings();
+        const current = recordings.find((item) => item.id === session.id);
+        if (current) setEvents(current.events);
+      }
+      setMessage("Masaüstü kaydı durduruldu; yakalanan tıklamalar adım listesine eklendi.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Masaüstü kaydı durdurulamadı.");
+    }
+  }
+
   async function analyze() {
     if (!session) return;
     const generated = await api.analyzeRecording(session.id);
@@ -202,6 +259,17 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
     await api.publishAutomationDraft(draft.id);
     await refreshDashboard();
     setMessage("Taslak workflow olarak yayınlandı. Otomasyonlar sekmesinde çalıştırılabilir.");
+  }
+
+  async function saveDraft(nextDraft: AutomationDraft) {
+    const saved = await api.updateAutomationDraft(nextDraft.id, {
+      steps: nextDraft.steps,
+      credentialId: nextDraft.credentialId,
+      title: nextDraft.title,
+      objective: nextDraft.objective
+    });
+    setDraft(saved);
+    setMessage("Adımlar, hesap profili ve onay kararları kaydedildi.");
   }
 
   return (
@@ -219,6 +287,7 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
             <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
               Kullanıcı işi normal yapar; sistem tıklama, alan seçimi, sekme, rapor, e-posta ve ekran kaydı metadata’sını toplar. AI bunu küçük otomasyonlara ve birleşik workflow’a dönüştürür.
             </p>
+            <div className="mt-3"><StatusPill value={agentOnline ? "local_agent_online" : "local_agent_offline"} /></div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="button-secondary" onClick={() => void startScreenRecording()} disabled={screenStatus === "recording"}>
@@ -227,6 +296,13 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
             </button>
             <button className="button-secondary" onClick={() => void stopScreenRecording()} disabled={screenStatus !== "recording"}>
               Durdur
+            </button>
+            <button className="button-secondary" onClick={() => void startDesktopRecording()} disabled={!agentOnline || desktopRecording}>
+              <Bot size={16} />
+              Masaüstünü Kaydet
+            </button>
+            <button className="button-secondary" onClick={() => void stopDesktopRecording()} disabled={!desktopRecording}>
+              Masaüstünü Durdur
             </button>
             <button className="button-primary" onClick={() => void startSession()}>
               <Radio size={16} />
@@ -291,7 +367,7 @@ function RecorderStudio({ refreshDashboard }: { refreshDashboard: () => Promise<
         </section>
       </div>
 
-      {draft ? <AutomationDraftPanel draft={draft} onPublish={publish} /> : null}
+      {draft ? <AutomationDraftPanel draft={draft} credentialProfiles={data.credentialProfiles} onChange={setDraft} onSave={saveDraft} onPublish={publish} /> : null}
     </div>
   );
 }
@@ -330,7 +406,7 @@ function RecorderInstallPanel() {
           <div>
             <h2 className="font-bold">Local Agent Bridge</h2>
             <p className="mt-1 text-sm leading-6 text-muted">
-              Masaüstü/ERP/Excel gibi browser dışı işler için yerel event bridge. Sonraki fazda OCR ve accessibility adapterleri buraya bağlanır.
+              Chrome/ERP adımlarını gerçek tarayıcıda oynatır; macOS uygulamalarını açar, tıklar, yazar ve onaydan sonra kaldığı yerden devam eder.
             </p>
           </div>
         </div>
@@ -338,7 +414,8 @@ function RecorderInstallPanel() {
           Klasör: <span className="font-mono">agents/local-agent</span>
         </div>
         <pre className="mt-4 overflow-x-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{`cd agents/local-agent
-OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm start`}</pre>
+npm install
+npm start`}</pre>
       </div>
     </section>
   );
@@ -402,7 +479,43 @@ function RecorderEmail({ capture }: { capture: (event: Omit<RecorderEvent, "id" 
   );
 }
 
-function AutomationDraftPanel({ draft, onPublish }: { draft: AutomationDraft; onPublish: () => Promise<void> }) {
+function AutomationDraftPanel({
+  draft,
+  credentialProfiles,
+  onChange,
+  onSave,
+  onPublish
+}: {
+  draft: AutomationDraft;
+  credentialProfiles: CredentialProfile[];
+  onChange: (draft: AutomationDraft) => void;
+  onSave: (draft: AutomationDraft) => Promise<void>;
+  onPublish: () => Promise<void>;
+}) {
+  function updateStep(index: number, patch: Partial<WorkflowStep>) {
+    onChange({ ...draft, steps: draft.steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step) });
+  }
+
+  function updateParameters(index: number, patch: Partial<NonNullable<WorkflowStep["parameters"]>>) {
+    const step = draft.steps[index];
+    updateStep(index, { parameters: { ...step.parameters, ...patch } });
+  }
+
+  function moveStep(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= draft.steps.length) return;
+    const steps = [...draft.steps];
+    [steps[index], steps[target]] = [steps[target], steps[index]];
+    onChange({ ...draft, steps });
+  }
+
+  function addStep() {
+    onChange({
+      ...draft,
+      steps: [...draft.steps, { id: `step_${crypto.randomUUID().slice(0, 8)}`, type: "browser.click", title: "Yeni otomasyon adımı", description: "Teknik kullanıcı tarafından eklendi.", requiresApproval: false, riskLevel: "low", parameters: {} }]
+    });
+  }
+
   return (
     <section className="panel p-5">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -411,22 +524,73 @@ function AutomationDraftPanel({ draft, onPublish }: { draft: AutomationDraft; on
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">{draft.objective}</p>
           <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-100">AI güveni %{draft.confidence}</div>
         </div>
-        <button className="button-primary" onClick={() => void onPublish()} disabled={draft.status === "published"}>
-          <CheckCircle2 size={16} />
-          Workflow Olarak Yayınla
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button className="button-secondary" onClick={() => void onSave(draft)}><Save size={16} />Kaydet</button>
+          <button className="button-primary" onClick={() => void onSave(draft).then(onPublish)} disabled={draft.status === "published"}>
+            <CheckCircle2 size={16} />
+            Workflow Olarak Yayınla
+          </button>
+        </div>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+      <div className="mt-5 rounded-lg border border-teal-200 bg-teal-50 p-4">
+        <h3 className="font-bold text-teal-950">Başlangıç Ayarları</h3>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <label className="text-sm font-semibold text-teal-950">
+            Bu workflow hangi hesapla çalışacak?
+            <select className="input mt-2" value={draft.credentialId || ""} onChange={(event) => onChange({ ...draft, credentialId: event.target.value || undefined })}>
+              <option value="">Hesap gerekmiyor / daha sonra seç</option>
+              {credentialProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.usernamePreview}</option>)}
+            </select>
+          </label>
+          <div className="text-sm leading-6 text-teal-950">
+            Teknik kullanıcı aşağıdaki adımlardan hangilerinde robotun durup onay istemesi gerektiğini seçer. Şifre workflow içine yazılmaz; yalnızca seçilen kasa kaydına bağlanır.
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div>
-          <h3 className="font-bold">Otomasyon Adımları</h3>
+          <div className="flex items-center justify-between gap-3"><h3 className="font-bold">Otomasyon Adımları ve Onay Noktaları</h3><button className="button-secondary" onClick={addStep}><Plus size={16} />Adım Ekle</button></div>
           <div className="mt-3 space-y-3">
             {draft.steps.map((step, index) => (
               <div key={step.id} className="rounded-lg border border-line bg-white p-4">
-                <div className="text-xs font-semibold text-brand">{index + 1}. {step.type}</div>
-                <div className="mt-1 font-semibold">{step.title}</div>
+                <div className="flex items-center justify-between gap-3">
+                  <select className="input max-w-64" value={step.type} onChange={(event) => updateStep(index, { type: event.target.value as WorkflowStep["type"] })}>
+                    <optgroup label="Tarayıcı"><option value="browser.navigate">Sayfa aç</option><option value="browser.click">Tıkla</option><option value="browser.type">Yaz</option><option value="browser.select">Seç</option><option value="browser.extract">Oku</option><option value="browser.wait">Bekle</option></optgroup>
+                    <optgroup label="Masaüstü"><option value="desktop.launch">Uygulama aç</option><option value="desktop.click">Ekrana tıkla</option><option value="desktop.type">Yaz</option><option value="desktop.hotkey">Kısayol</option><option value="desktop.wait">Bekle</option></optgroup>
+                    <option value="approval.wait">Yalnızca onay bekle</option>
+                  </select>
+                  <div className="flex gap-1">
+                    <button className="icon-button" title="Yukarı taşı" onClick={() => moveStep(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
+                    <button className="icon-button" title="Aşağı taşı" onClick={() => moveStep(index, 1)} disabled={index === draft.steps.length - 1}><ArrowDown size={16} /></button>
+                    <button className="icon-button text-danger" title="Adımı sil" onClick={() => onChange({ ...draft, steps: draft.steps.filter((_, stepIndex) => stepIndex !== index) })}><Trash2 size={16} /></button>
+                  </div>
+                </div>
+                <input className="input mt-2 font-semibold" value={step.title} onChange={(event) => updateStep(index, { title: event.target.value })} />
                 <div className="mt-1 text-sm text-muted">{step.description}</div>
-                {step.requiresApproval ? <div className="mt-2 text-xs font-semibold text-amber-700">İnsan onayı zorunlu</div> : null}
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {step.type === "browser.navigate" ? <input className="input" placeholder="https://erp.example.com" value={step.parameters?.url || ""} onChange={(event) => updateParameters(index, { url: event.target.value })} /> : null}
+                  {step.type.startsWith("browser.") && !["browser.navigate", "browser.wait"].includes(step.type) ? <input className="input" placeholder="Ekran seçicisi" value={step.parameters?.selector || ""} onChange={(event) => updateParameters(index, { selector: event.target.value })} /> : null}
+                  {["browser.type", "desktop.type"].includes(step.type) ? (
+                    <select className="input" value={step.parameters?.credentialField || "value"} onChange={(event) => updateParameters(index, { credentialField: event.target.value === "value" ? undefined : event.target.value as "username" | "password" })}>
+                      <option value="value">Sabit/değişken değer</option>
+                      <option value="username">Kasadaki kullanıcı adı</option>
+                      <option value="password">Kasadaki şifre</option>
+                    </select>
+                  ) : null}
+                  {["browser.type", "desktop.type"].includes(step.type) && !step.parameters?.credentialField ? <input className="input" placeholder="Yazılacak değer" value={step.parameters?.value || ""} onChange={(event) => updateParameters(index, { value: event.target.value })} /> : null}
+                  {step.type === "browser.select" ? <input className="input" placeholder="Seçilecek seçenek" value={step.parameters?.option || ""} onChange={(event) => updateParameters(index, { option: event.target.value })} /> : null}
+                  {step.type.startsWith("desktop.") ? <input className="input" placeholder="Uygulama adı" value={step.parameters?.appName || ""} onChange={(event) => updateParameters(index, { appName: event.target.value })} /> : null}
+                  {step.type === "desktop.click" ? <><input className="input" type="number" min="0" placeholder="X koordinatı" value={step.parameters?.x ?? ""} onChange={(event) => updateParameters(index, { x: event.target.value ? Number(event.target.value) : undefined })} /><input className="input" type="number" min="0" placeholder="Y koordinatı" value={step.parameters?.y ?? ""} onChange={(event) => updateParameters(index, { y: event.target.value ? Number(event.target.value) : undefined })} /></> : null}
+                  {step.type === "desktop.hotkey" ? <input className="input" placeholder="command, shift, s" value={step.parameters?.keys?.join(", ") || ""} onChange={(event) => updateParameters(index, { keys: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /> : null}
+                  {["browser.wait", "desktop.wait"].includes(step.type) ? <input className="input" type="number" min="0" max="120000" placeholder="Bekleme (ms)" value={step.parameters?.timeoutMs ?? 1000} onChange={(event) => updateParameters(index, { timeoutMs: Number(event.target.value) })} /> : null}
+                </div>
+                <label className="mt-4 flex items-center gap-3 rounded-md bg-amber-50 p-3 text-sm font-semibold text-amber-950 ring-1 ring-amber-200">
+                  <input type="checkbox" checked={step.requiresApproval || step.type === "approval.wait"} disabled={step.type === "approval.wait"} onChange={(event) => updateStep(index, { requiresApproval: event.target.checked, approvalPrompt: event.target.checked ? step.approvalPrompt || `${step.title} çalışmadan önce onaylıyor musunuz?` : undefined })} />
+                  Bu adımdan önce teknik kullanıcıdan onay iste
+                </label>
+                {step.requiresApproval || step.type === "approval.wait" ? <input className="input mt-2" value={step.approvalPrompt || ""} placeholder="Onay ekranında sorulacak soru" onChange={(event) => updateStep(index, { approvalPrompt: event.target.value })} /> : null}
               </div>
             ))}
           </div>
@@ -532,26 +696,85 @@ function Overview({ data, setTab }: { data: SaasDashboard; setTab: (tab: Tab) =>
   );
 }
 
-function Workflows({ data, onRun }: { data: SaasDashboard; onRun: (workflow: Workflow) => void }) {
+function Workflows({
+  data,
+  onRun,
+  refresh,
+  setMessage
+}: {
+  data: SaasDashboard;
+  onRun: (workflow: Workflow) => void;
+  refresh: () => Promise<void>;
+  setMessage: (message: string | null) => void;
+}) {
+  const [credentialByWorkflow, setCredentialByWorkflow] = useState<Record<string, string>>({});
+
+  async function exportFile(workflow: Workflow) {
+    const { blob, disposition } = await api.exportAutomation(workflow.id);
+    const match = disposition?.match(/filename="([^"]+)"/);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = match?.[1] || `${workflow.name}.otomasyon`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    setMessage(`${workflow.name} şifresiz .otomasyon dosyası olarak indirildi.`);
+  }
+
+  async function importFile(file: File) {
+    try {
+      const pkg = JSON.parse(await file.text()) as AutomationPackage;
+      await api.importAutomation(pkg);
+      await refresh();
+      setMessage(".otomasyon dosyası içe alındı. Hesap gerektiriyorsa profil seçip yayına alın.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Otomasyon dosyası içe alınamadı.");
+    }
+  }
+
+  async function activate(workflow: Workflow) {
+    const credentialId = credentialByWorkflow[workflow.id] || workflow.credentialId;
+    await api.configureWorkflow(workflow.id, { credentialId, publish: true });
+    await refresh();
+    setMessage(`${workflow.name} hesap profiliyle yayına alındı.`);
+  }
+
+  async function runConfigured(workflow: Workflow) {
+    const credentialId = credentialByWorkflow[workflow.id];
+    if (credentialId && credentialId !== workflow.credentialId) await api.configureWorkflow(workflow.id, { credentialId });
+    await onRun(workflow);
+  }
+
   return (
-    <section className="grid gap-4 lg:grid-cols-2">
-      {data.workflows.map((workflow) => (
-        <div key={workflow.id} className="panel p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-xs font-semibold uppercase text-brand">{workflow.category} · {workflow.status}</div>
-              <h2 className="mt-1 text-lg font-bold">{workflow.name}</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">{workflow.description}</p>
-            </div>
-            <button className="button-primary shrink-0" disabled={workflow.status !== "published"} onClick={() => onRun(workflow)}>
-              <Play size={16} />
-              Çalıştır
-            </button>
-          </div>
-          <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-muted ring-1 ring-line">Tetikleyici: {workflow.trigger}</div>
+    <div className="space-y-5">
+      <section className="panel p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div><h2 className="section-title">Otomasyon Dosyası</h2><p className="muted mt-1">Workflow’ları şifre içermeyen .otomasyon formatında taşıyın.</p></div>
+          <label className="button-secondary cursor-pointer"><Upload size={16} />.otomasyon İçe Al<input className="hidden" type="file" accept=".otomasyon,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} /></label>
         </div>
-      ))}
-    </section>
+      </section>
+      <section className="grid gap-4 lg:grid-cols-2">
+        {data.workflows.map((workflow) => (
+          <div key={workflow.id} className="panel p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-semibold uppercase text-brand">{workflow.category} · {workflow.status}</div>
+                <h2 className="mt-1 text-lg font-bold">{workflow.name}</h2>
+                <p className="mt-2 text-sm leading-6 text-muted">{workflow.description}</p>
+              </div>
+              <button className="icon-button shrink-0" title=".otomasyon indir" onClick={() => void exportFile(workflow)}><Download size={18} /></button>
+            </div>
+            <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-muted ring-1 ring-line">Tetikleyici: {workflow.trigger}</div>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <select className="input" value={credentialByWorkflow[workflow.id] || workflow.credentialId || ""} onChange={(event) => setCredentialByWorkflow((current) => ({ ...current, [workflow.id]: event.target.value }))}>
+                <option value="">Hesap profili yok</option>
+                {data.credentialProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.usernamePreview}</option>)}
+              </select>
+              {workflow.status === "published" ? <button className="button-primary shrink-0" onClick={() => void runConfigured(workflow)}><Play size={16} />Çalıştır</button> : <button className="button-primary shrink-0" onClick={() => void activate(workflow)}><CheckCircle2 size={16} />Yayına Al</button>}
+            </div>
+          </div>
+        ))}
+      </section>
+    </div>
   );
 }
 
@@ -565,13 +788,14 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
     <section className="panel overflow-hidden">
       <TableHeader title="Robot İşleri" subtitle="Queue, job lifecycle ve robot log takibi" />
       <DataTable
-        headers={["Job", "Workflow", "Durum", "Retry", "Zaman", "Aksiyon"]}
+        headers={["Job", "Workflow", "Durum", "İlerleme", "Retry", "Sonuç", "Aksiyon"]}
         rows={data.jobs.map((job) => [
           job.id,
           data.workflows.find((workflow) => workflow.id === job.workflowId)?.name ?? job.workflowId,
           <StatusPill key="status" value={job.status} />,
+          `${Math.min(job.currentStepIndex, job.totalSteps)}/${job.totalSteps}`,
           `${job.retryCount}/${job.maxRetries}`,
-          formatDate(job.createdAt),
+          job.lastError || formatDate(job.createdAt),
           job.status === "waiting_approval" || job.status === "queued" || job.status === "running" ? (
             <button key="cancel" className="text-sm font-semibold text-danger" onClick={() => void cancel(job)}>
               İptal
@@ -729,17 +953,22 @@ function Opportunities({ data, refresh }: { data: SaasDashboard; refresh: () => 
 }
 
 function Connectors({ data, refresh, setMessage }: { data: SaasDashboard; refresh: () => Promise<void>; setMessage: (message: string | null) => void }) {
-  const [name, setName] = useState("Yeni Webhook");
-  const [secret, setSecret] = useState("demo-secret-123");
-  const [type, setType] = useState<ConnectorAccount["type"]>("webhook");
+  const [name, setName] = useState("ERP Hesabı");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginUrl, setLoginUrl] = useState("");
+  const [type, setType] = useState<ConnectorAccount["type"]>("portal");
 
   async function add() {
     setMessage(null);
     try {
-      await api.createConnector({ name, type, secret });
-      setName("Yeni Webhook");
-      setSecret("demo-secret-123");
+      await api.createConnector({ name, type, username, password, loginUrl });
+      setName("ERP Hesabı");
+      setUsername("");
+      setPassword("");
+      setLoginUrl("");
       await refresh();
+      setMessage("Hesap profili şifrelenerek kasaya kaydedildi. Artık workflow başlangıç ayarından seçilebilir.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Bağlayıcı eklenemedi.");
     }
@@ -748,9 +977,9 @@ function Connectors({ data, refresh, setMessage }: { data: SaasDashboard; refres
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="section-title">Bağlayıcı Ekle</h2>
-        <p className="muted mt-1">E-imza PIN’i, OTP, banka şifresi ve kişisel elektronik imza saklanamaz.</p>
-        <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr_1fr_auto]">
+        <h2 className="section-title">Uygulama / ERP Hesabı Ekle</h2>
+        <p className="muted mt-1">Robot kullanıcı adı ve şifreyi yalnızca giriş adımında kasadan alır. OTP, SMS kodu, banka ve e-imza bilgileri kalıcı olarak saklanmaz.</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[150px_1fr_1.2fr_1fr_1fr_auto]">
           <select className="input" value={type} onChange={(event) => setType(event.target.value as ConnectorAccount["type"])}>
             <option value="email">E-posta</option>
             <option value="google_sheets">Google Sheets</option>
@@ -758,11 +987,13 @@ function Connectors({ data, refresh, setMessage }: { data: SaasDashboard; refres
             <option value="portal">Portal</option>
             <option value="csv">CSV</option>
           </select>
-          <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
-          <input className="input" value={secret} onChange={(event) => setSecret(event.target.value)} />
-          <button className="button-primary" onClick={() => void add()}>
+          <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Hesap adı" />
+          <input className="input" value={loginUrl} onChange={(event) => setLoginUrl(event.target.value)} placeholder="https://erp..." />
+          <input className="input" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Kullanıcı adı" autoComplete="off" />
+          <input className="input" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Şifre" type="password" autoComplete="new-password" />
+          <button className="button-primary" onClick={() => void add()} disabled={!name || (!username && !password)}>
             <KeyRound size={16} />
-            Ekle
+            Kasaya Ekle
           </button>
         </div>
       </section>
@@ -780,6 +1011,8 @@ function Connectors({ data, refresh, setMessage }: { data: SaasDashboard; refres
               <StatusPill value={connector.status} />
               <span className="text-muted">{connector.secretPreview}</span>
             </div>
+            {connector.usernamePreview ? <div className="mt-3 text-sm text-muted">Kullanıcı: {connector.usernamePreview}</div> : null}
+            {connector.loginUrl ? <div className="mt-1 truncate text-xs text-muted">{connector.loginUrl}</div> : null}
           </div>
         ))}
       </section>
@@ -872,7 +1105,7 @@ function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<Rea
 }
 
 function StatusPill({ value }: { value: string }) {
-  const tone = value.includes("pending") || value.includes("waiting") || value.includes("needs") || value === "queued" ? "bg-amber-100 text-amber-800 ring-amber-200" : value.includes("failed") || value.includes("rejected") || value.includes("cancelled") ? "bg-red-100 text-red-800 ring-red-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200";
+  const tone = value.includes("pending") || value.includes("waiting") || value.includes("needs") || value === "queued" ? "bg-amber-100 text-amber-800 ring-amber-200" : value.includes("failed") || value.includes("rejected") || value.includes("cancelled") || value.includes("offline") ? "bg-red-100 text-red-800 ring-red-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200";
   return <span className={`badge ${tone}`}>{value}</span>;
 }
 

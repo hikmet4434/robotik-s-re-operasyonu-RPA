@@ -4,12 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   ApprovalTask,
+  AgentStepLease,
   AuditActor,
   AuditEvent,
   AutomationDraft,
+  AutomationPackage,
   AutomationOpportunity,
   CompliancePolicy,
   ConnectorAccount,
+  CredentialProfile,
   CredentialVaultItem,
   DocumentRecord,
   Job,
@@ -79,6 +82,7 @@ const DEFAULT_ORG_ID = "org_demo_kobi";
 const DEFAULT_USER_ID = "usr_hikmet";
 const DEFAULT_WORKER_ID = "wrk_cloud_01";
 const DEFAULT_QUEUE_ID = "que_kobi_ops";
+const LOCAL_WORKER_ID = "wrk_local_01";
 
 const sensitiveSecretPattern = /(e[-\s]?imza|pin|sms|otp|tek kullanımlık|banka|mobil imza|elektronik imza)/i;
 const textLikeMimePattern = /^(text\/|application\/json|application\/csv|text\/csv)/i;
@@ -419,6 +423,39 @@ function normalizeState(state: SaasState): SaasState {
   ensure("recordingSessions", []);
   ensure("recorderEvents", []);
   ensure("automationDrafts", []);
+  ensure("credentials", []);
+  if (!state.workers.some((worker) => worker.id === LOCAL_WORKER_ID)) {
+    state.workers.push({
+      id: LOCAL_WORKER_ID,
+      organizationId: DEFAULT_ORG_ID,
+      name: "Yerel Ajan",
+      runtime: "local",
+      status: "offline",
+      lastSeenAt: new Date(0).toISOString()
+    });
+    changed = true;
+  }
+  for (const job of state.jobs) {
+    if (typeof job.currentStepIndex !== "number") {
+      job.currentStepIndex = job.status === "succeeded" ? 1 : 0;
+      changed = true;
+    }
+    if (typeof job.totalSteps !== "number") {
+      const workflow = state.workflows.find((item) => item.id === job.workflowId);
+      const version = workflow ? state.workflowVersions.find((item) => item.id === workflow.currentVersionId) : undefined;
+      job.totalSteps = version?.steps.length ?? 0;
+      changed = true;
+    }
+  }
+  for (const connector of state.connectors) {
+    const credential = state.credentials.find((item) => item.connectorId === connector.id);
+    if (credential && connector.credentialId !== credential.id) {
+      connector.credentialId = credential.id;
+      connector.loginUrl = credential.loginUrl;
+      connector.usernamePreview = credential.usernamePreview;
+      changed = true;
+    }
+  }
   if (changed) writeState(state);
   return state;
 }
@@ -474,6 +511,9 @@ export function getDashboard(): SaasDashboard {
   const state = readState();
   const context = getCurrentContext();
   const scoped = tenantState(state, context.organization.id);
+  for (const worker of scoped.workers) {
+    if (worker.runtime === "local" && Date.now() - new Date(worker.lastSeenAt).getTime() > 45_000) worker.status = "offline";
+  }
   const succeeded = scoped.jobs.filter((job) => job.status === "succeeded").length;
   const finished = scoped.jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status)).length;
   const usage = {
@@ -499,12 +539,26 @@ export function getDashboard(): SaasDashboard {
     approvals: scoped.approvals,
     documents: scoped.documents,
     connectors: scoped.connectors,
+    credentialProfiles: state.credentials
+      .filter((item) => item.organizationId === context.organization.id)
+      .map(toCredentialProfile),
     policies: scoped.policies,
     audit: scoped.audit.slice(0, 80),
     workers: scoped.workers,
     recordingSessions: scoped.recordingSessions,
     recorderEvents: scoped.recorderEvents.filter((event) => scoped.recordingSessions.some((session) => session.id === event.target || event.target.includes(session.id))),
     automationDrafts: scoped.automationDrafts
+  };
+}
+
+function toCredentialProfile(item: CredentialVaultItem): CredentialProfile {
+  return {
+    id: item.id,
+    connectorId: item.connectorId,
+    label: item.label,
+    loginUrl: item.loginUrl,
+    usernamePreview: item.usernamePreview,
+    createdAt: item.createdAt
   };
 }
 
@@ -557,6 +611,19 @@ export function appendRecordingEvent(sessionId: string, input: Omit<RecorderEven
   return event;
 }
 
+export function attachRecordingVideo(sessionId: string, input: { fileName: string; mimeType: string; sizeBytes: number }) {
+  const state = readState();
+  const session = findTenantRecord(state.recordingSessions, sessionId);
+  session.videoFileName = input.fileName;
+  session.videoMimeType = input.mimeType;
+  session.videoSizeBytes = input.sizeBytes;
+  session.screenRecordingStatus = "captured";
+  session.updatedAt = now();
+  audit(state, "user", `${session.title} ekran kaydı güvenli dosya alanına kaydedildi.`, "recording_session", session.id);
+  writeState(state);
+  return session;
+}
+
 export function analyzeRecording(sessionId: string) {
   const state = readState();
   const session = findTenantRecord(state.recordingSessions, sessionId);
@@ -567,6 +634,29 @@ export function analyzeRecording(sessionId: string) {
   session.status = "analyzed";
   session.updatedAt = now();
   audit(state, "ai", `${session.title} kaydı analiz edildi ve otomasyon taslağı üretildi.`, "automation_draft", draft.id);
+  writeState(state);
+  return draft;
+}
+
+export function updateAutomationDraft(
+  draftId: string,
+  input: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }
+) {
+  const state = readState();
+  const draft = findTenantRecord(state.automationDrafts, draftId);
+  if (input.credentialId) findTenantRecord(state.credentials, input.credentialId);
+  draft.steps = input.steps.map((step) => ({
+    ...step,
+    credentialId: step.credentialId ?? input.credentialId,
+    approvalPrompt: step.requiresApproval ? step.approvalPrompt || `${step.title} çalışmadan önce onaylıyor musunuz?` : undefined
+  }));
+  draft.credentialId = input.credentialId;
+  if (input.title) draft.title = input.title;
+  if (input.objective) draft.objective = input.objective;
+  draft.approvalGates = draft.steps
+    .filter((step) => step.requiresApproval || step.type === "approval.wait")
+    .map((step) => ({ title: step.title, reason: step.approvalPrompt || step.description, riskLevel: step.riskLevel }));
+  audit(state, "user", `${draft.title} için çalışma adımları ve onay noktaları yapılandırıldı.`, "automation_draft", draft.id);
   writeState(state);
   return draft;
 }
@@ -586,6 +676,7 @@ export function publishAutomationDraft(draftId: string) {
     trigger: "Recorder Studio kaydından üretildi",
     description: draft.objective,
     currentVersionId: versionId,
+    credentialId: draft.credentialId,
     createdAt: ts
   };
   const version: WorkflowVersion = {
@@ -610,35 +701,24 @@ export function publishAutomationDraft(draftId: string) {
 }
 
 function buildAutomationDraft(session: RecordingSession, events: RecorderEvent[]): AutomationDraft {
-  const hasLogin = events.some((event) => event.type === "app.login");
-  const hasReport = events.some((event) => event.type.startsWith("report."));
-  const hasEmail = events.some((event) => event.type.startsWith("email."));
-  const hasDownload = events.some((event) => event.type === "file.download");
-  const hasNavigation = events.some((event) => event.type === "navigation" || event.type === "tab.switch");
-  const steps: WorkflowStep[] = [];
-
-  if (hasLogin) steps.push(makeStep("browser.navigate", "Uygulamaya giriş yap", "Kullanıcının kaydettiği uygulama giriş akışını tekrarlar.", false, "medium"));
-  if (hasNavigation) steps.push(makeStep("browser.click", "Sekmeler arasında dolaş", "Kayıtta görülen menü/sekme geçişlerini kararlı selector önerileriyle uygular.", false, "low"));
-  if (hasReport) {
-    steps.push(makeStep("browser.extract", "Raporu filtrele ve oku", "Rapor ekranındaki filtreleri uygular, tablo verilerini çıkarır.", false, "medium"));
-    if (hasDownload) steps.push(makeStep("browser.click", "Raporu indir", "Kullanıcının indirdiği raporu tekrar üretir ve dosyayı kaydeder.", false, "medium"));
-  }
-  if (hasEmail) {
-    steps.push(makeStep("email.draft", "E-posta özetini hazırla", "Okunan rapor veya e-postaları kısa müşteri/ekip özetine dönüştürür.", false, "medium"));
-    steps.push(makeStep("approval.wait", "Gönderim için insan onayı bekle", "Müşteri iletişimi olduğu için final gönderim onaysız çalışmaz.", true, "high"));
-    steps.push(makeStep("email.send_after_approval", "Onay sonrası e-postayı gönder", "Onay alındıktan sonra e-posta gönderimini tamamlar.", true, "high"));
-  }
+  const actionableEvents = events.filter((event) => !["screen.start", "screen.stop", "tab.switch"].includes(event.type));
+  const steps = actionableEvents.map((event) => stepFromRecorderEvent(event));
   if (steps.length === 0) {
-    steps.push(makeStep("browser.click", "Kaydedilen tıklamaları tekrar et", "Kayıttaki temel tıklama ve form adımlarını otomasyon taslağına çevirir.", false, "medium"));
+    steps.push(makeStep("browser.wait", "Uygulamanın hazır olmasını bekle", "Kayda çalıştırılabilir olay eklenmedi; teknik kullanıcı bu adımı düzenleyebilir.", false, "low", { timeoutMs: 1000 }));
   }
 
   const variables = [
-    ...uniqueEvents(events, "input").map((event, index) => ({ key: `input_${index + 1}`, label: event.label, example: event.value ?? "Kullanıcı girişi", source: event.appArea })),
+    ...uniqueEvents(events, "input")
+      .filter((event) => event.value !== "MASKED_SECRET")
+      .map((event, index) => ({ key: `input_${index + 1}`, label: event.label, example: event.value ?? "Kullanıcı girişi", source: event.appArea })),
     ...uniqueEvents(events, "report.filter").map((event, index) => ({ key: `filter_${index + 1}`, label: event.label, example: event.value ?? "Filtre", source: "Rapor filtresi" })),
     ...uniqueEvents(events, "email.draft").map((event, index) => ({ key: `email_${index + 1}`, label: event.label, example: event.value ?? "E-posta taslağı", source: "E-posta ekranı" }))
   ].slice(0, 8);
 
   const stepIds = steps.map((step) => step.id);
+  const hasLogin = events.some((event) => event.type === "app.login" || /login|giriş/i.test(event.appArea));
+  const hasReport = events.some((event) => event.type.startsWith("report."));
+  const hasEmail = events.some((event) => event.type.startsWith("email."));
   const subAutomations = [
     ...(hasLogin ? [{ name: "Uygulamaya giriş", purpose: "Login ve oturum hazırlığı", stepIds: stepIds.slice(0, 1) }] : []),
     ...(hasReport ? [{ name: "Rapor hazırlama", purpose: "Sekme dolaşımı, filtreleme, rapor okuma ve indirme", stepIds: stepIds.filter((_, index) => index <= 3) }] : []),
@@ -656,16 +736,73 @@ function buildAutomationDraft(session: RecordingSession, events: RecorderEvent[]
     status: "draft",
     steps,
     variables,
-    approvalGates: hasEmail
-      ? [{ title: "E-posta gönderimi", reason: "Müşteri veya üçüncü kişi iletişimi insan onayı gerektirir.", riskLevel: "high" }]
-      : [],
+    approvalGates: steps
+      .filter((step) => step.requiresApproval)
+      .map((step) => ({ title: step.title, reason: step.approvalPrompt || step.description, riskLevel: step.riskLevel })),
     subAutomations,
     createdAt: now()
   };
 }
 
-function makeStep(type: WorkflowStep["type"], title: string, description: string, requiresApproval: boolean, riskLevel: WorkflowStep["riskLevel"]): WorkflowStep {
-  return { id: id("step"), type, title, description, requiresApproval, riskLevel };
+function stepFromRecorderEvent(event: RecorderEvent): WorkflowStep {
+  const selector = event.selectorHint && !["local-agent", "display-media"].includes(event.selectorHint) ? event.selectorHint : undefined;
+  const common = {
+    title: event.label,
+    description: `${event.appArea} alanında kaydedilen gerçek kullanıcı adımı.`,
+    requiresApproval: false,
+    riskLevel: "low" as const
+  };
+
+  if (event.type === "navigation") {
+    return makeStep("browser.navigate", event.label, common.description, false, "low", { url: event.value || event.target.split(":").slice(1).join(":") });
+  }
+  if (event.type === "input") {
+    const password = event.value === "MASKED_SECRET" || /şifre|sifre|password/i.test(event.label + event.target);
+    const username = /kullanıcı|kullanici|username|e-?posta|email/i.test(event.label + event.target) && !password;
+    return makeStep("browser.type", event.label, common.description, false, password ? "medium" : "low", {
+      selector,
+      value: password || username ? undefined : event.value,
+      credentialField: password ? "password" : username ? "username" : undefined
+    });
+  }
+  if (event.type === "select" || event.type === "report.filter") {
+    const isSelect = selector?.includes("select") || event.type === "select";
+    return makeStep(isSelect ? "browser.select" : "browser.type", event.label, common.description, false, "low", {
+      selector,
+      ...(isSelect ? { option: event.value } : { value: event.value })
+    });
+  }
+  if (event.region && (event.type === "note" || event.selectorHint === "local-agent" || /desktop|screen/i.test(event.target))) {
+    return makeStep("desktop.click", event.label, common.description, false, "medium", {
+      appName: event.appArea,
+      x: Math.round(event.region.x + event.region.w / 2),
+      y: Math.round(event.region.y + event.region.h / 2)
+    });
+  }
+  if (event.type === "report.open" || event.type === "report.export" || event.type === "file.download" || event.type === "file.upload") {
+    return makeStep("browser.click", event.label, common.description, false, "medium", { selector });
+  }
+  if (event.type === "email.read" || event.type === "email.summarize") {
+    return makeStep("browser.extract", event.label, common.description, false, "medium", { selector, outputKey: `output_${event.id}` });
+  }
+  if (event.type === "email.draft") {
+    return makeStep("browser.type", event.label, common.description, false, "medium", { selector, value: event.value });
+  }
+
+  const isFinalAction = event.type === "email.send" || /gönder|onayla|ödeme|beyan/i.test(event.label);
+  return makeStep("browser.click", event.label, common.description, isFinalAction, isFinalAction ? "high" : "low", { selector }, isFinalAction ? `${event.label} adımının çalışmasına onay veriyor musunuz?` : undefined);
+}
+
+function makeStep(
+  type: WorkflowStep["type"],
+  title: string,
+  description: string,
+  requiresApproval: boolean,
+  riskLevel: WorkflowStep["riskLevel"],
+  parameters?: WorkflowStep["parameters"],
+  approvalPrompt?: string
+): WorkflowStep {
+  return { id: id("step"), type, title, description, requiresApproval, riskLevel, parameters, approvalPrompt };
 }
 
 function uniqueEvents(events: RecorderEvent[], type: RecorderEvent["type"]) {
@@ -719,7 +856,7 @@ export function runWorkflow(workflowId: string, payloadSummary = "Manuel test ç
   }
 
   const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
-  const requiresApproval = version?.steps.some((step) => step.requiresApproval || step.riskLevel === "critical") ?? false;
+  if (!version || version.steps.length === 0) throw new Error("Workflow içinde çalıştırılabilir adım bulunamadı.");
   const createdAt = now();
   const queueItem: QueueItem = {
     id: id("qitem"),
@@ -735,45 +872,19 @@ export function runWorkflow(workflowId: string, payloadSummary = "Manuel test ç
     organizationId: DEFAULT_ORG_ID,
     workflowId: workflow.id,
     queueItemId: queueItem.id,
-    workerId: DEFAULT_WORKER_ID,
-    status: requiresApproval ? "waiting_approval" : "succeeded",
+    workerId: LOCAL_WORKER_ID,
+    status: "queued",
     retryCount: 0,
     maxRetries: 2,
-    startedAt: createdAt,
-    completedAt: requiresApproval ? undefined : createdAt,
+    currentStepIndex: 0,
+    totalSteps: version.steps.length,
     createdAt
   };
 
-  queueItem.status = job.status;
   state.queueItems.unshift(queueItem);
   state.jobs.unshift(job);
-  state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: createdAt, level: "info", message: `${workflow.name} bulut robota alındı.` });
-  state.jobLogs.unshift({
-    id: id("log"),
-    organizationId: DEFAULT_ORG_ID,
-    jobId: job.id,
-    ts: createdAt,
-    level: requiresApproval ? "warn" : "info",
-    message: requiresApproval ? "Policy gate tetiklendi: insan onayı bekleniyor." : "Robot işi başarıyla tamamlandı."
-  });
-
-  if (requiresApproval) {
-    state.approvals.unshift({
-      id: id("app"),
-      organizationId: DEFAULT_ORG_ID,
-      jobId: job.id,
-      title: `${workflow.name} için onay`,
-      summary: "Bu otomasyon riskli veya yasal/finansal etkili bir adım içeriyor. İnsan onayı olmadan final aksiyon çalışmaz.",
-      riskLevel: version?.steps.some((step) => step.riskLevel === "critical") ? "critical" : "high",
-      status: "pending",
-      diff: [
-        { label: "Robot çıktısı", before: "Taslak", after: payloadSummary },
-        { label: "Final aksiyon", before: "Kapalı", after: "Onay sonrası çalışacak" }
-      ],
-      dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      createdAt
-    });
-  }
+  state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: createdAt, level: "info", message: `${workflow.name} yerel ajan kuyruğuna alındı.` });
+  queueJobAtCurrentStep(state, job, workflow, version.steps, payloadSummary);
 
   audit(state, "robot", `${workflow.name} için job oluşturuldu: ${job.status}.`, "job", job.id);
   writeState(state);
@@ -801,17 +912,18 @@ export function resolveApproval(approvalId: string, approved: boolean) {
   if (approval.jobId) {
     const job = state.jobs.find((item) => item.id === approval.jobId && item.organizationId === DEFAULT_ORG_ID);
     if (job) {
-      job.status = approved ? "succeeded" : "failed";
-      job.completedAt = now();
-      state.queueItems = state.queueItems.map((item) => (item.id === job.queueItemId ? { ...item, status: job.status } : item));
-      state.jobLogs.unshift({
-        id: id("log"),
-        organizationId: DEFAULT_ORG_ID,
-        jobId: job.id,
-        ts: now(),
-        level: approved ? "info" : "error",
-        message: approved ? "İnsan onayı alındı; robot final adımı tamamladı." : "İnsan onayı reddedildi; robot işi durduruldu."
-      });
+      const workflow = state.workflows.find((item) => item.id === job.workflowId);
+      const version = workflow ? state.workflowVersions.find((item) => item.id === workflow.currentVersionId) : undefined;
+      if (!approved || !workflow || !version) {
+        job.status = "failed";
+        job.lastError = approved ? "Workflow sürümü bulunamadı." : "Teknik kullanıcı onayı reddetti.";
+        job.completedAt = now();
+        syncQueueItem(state, job);
+      } else {
+        if (approval.resumeAction === "advance") job.currentStepIndex += 1;
+        queueJobAtCurrentStep(state, job, workflow, version.steps, "Onay sonrası devam");
+      }
+      state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: approved ? "info" : "error", message: approved ? "İnsan onayı alındı; robot kuyruğa geri döndü." : "İnsan onayı reddedildi; robot işi durduruldu." });
     }
   }
 
@@ -826,6 +938,148 @@ export function resolveApproval(approvalId: string, approved: boolean) {
   audit(state, "user", approved ? "Onay görevi onaylandı." : "Onay görevi reddedildi.", "approval", approval.id);
   writeState(state);
   return approval;
+}
+
+function queueJobAtCurrentStep(state: SaasState, job: Job, workflow: Workflow, steps: WorkflowStep[], payloadSummary: string) {
+  const step = steps[job.currentStepIndex];
+  if (!step) {
+    job.status = "succeeded";
+    job.completedAt = now();
+    job.leaseExpiresAt = undefined;
+    syncQueueItem(state, job);
+    state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: "Workflow bütün adımlarıyla başarıyla tamamlandı." });
+    return;
+  }
+
+  const existingApproval = state.approvals.find((item) => item.jobId === job.id && item.stepIndex === job.currentStepIndex);
+  const needsGate = step.type === "approval.wait" || step.requiresApproval || step.riskLevel === "critical";
+  if (needsGate && existingApproval?.status !== "approved") {
+    job.status = existingApproval?.status === "rejected" ? "failed" : "waiting_approval";
+    if (!existingApproval) {
+      state.approvals.unshift({
+        id: id("app"),
+        organizationId: DEFAULT_ORG_ID,
+        jobId: job.id,
+        title: step.title,
+        summary: step.approvalPrompt || `${workflow.name} içindeki ${job.currentStepIndex + 1}. adım çalışmadan önce teknik kullanıcı onayı gerekiyor.`,
+        riskLevel: step.riskLevel === "low" ? "medium" : step.riskLevel,
+        status: "pending",
+        stepIndex: job.currentStepIndex,
+        resumeAction: step.type === "approval.wait" ? "advance" : "execute",
+        diff: [
+          { label: "Workflow", before: "Beklemede", after: workflow.name },
+          { label: "Çalışacak adım", before: "Kapalı", after: `${job.currentStepIndex + 1}. ${step.title}` },
+          { label: "İş girdisi", before: "Kuyruk", after: payloadSummary }
+        ],
+        dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: now()
+      });
+      state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "warn", message: `${job.currentStepIndex + 1}. adım için teknik kullanıcı onayı bekleniyor.` });
+    }
+  } else {
+    job.status = "queued";
+  }
+  syncQueueItem(state, job);
+}
+
+function syncQueueItem(state: SaasState, job: Job) {
+  state.queueItems = state.queueItems.map((item) => (item.id === job.queueItemId ? { ...item, status: job.status } : item));
+}
+
+export function heartbeatLocalAgent(input: { name?: string; platform?: string }) {
+  const state = readState();
+  let worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
+  if (!worker) {
+    worker = { id: LOCAL_WORKER_ID, organizationId: DEFAULT_ORG_ID, name: input.name || "Yerel Ajan", runtime: "local", status: "idle", lastSeenAt: now() };
+    state.workers.push(worker);
+  }
+  worker.name = input.name || worker.name;
+  worker.status = state.jobs.some((job) => job.workerId === worker!.id && job.status === "running") ? "running" : "idle";
+  worker.lastSeenAt = now();
+  writeState(state);
+  return { ...worker, platform: input.platform };
+}
+
+export function leaseNextAgentStep(): AgentStepLease | null {
+  const state = readState();
+  const ts = Date.now();
+  let recoveredStaleLease = false;
+  for (const stale of state.jobs.filter((job) => job.status === "running" && job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() < ts)) {
+    stale.status = "queued";
+    stale.leaseExpiresAt = undefined;
+    syncQueueItem(state, stale);
+    state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: stale.id, ts: now(), level: "warn", message: "Ajan kira süresi doldu; adım yeniden kuyruğa alındı." });
+    recoveredStaleLease = true;
+  }
+
+  const job = state.jobs.find((item) => item.status === "queued");
+  if (!job) {
+    if (recoveredStaleLease) writeState(state);
+    return null;
+  }
+  const workflow = findTenantRecord(state.workflows, job.workflowId);
+  const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
+  const step = version?.steps[job.currentStepIndex];
+  if (!version || !step) {
+    job.status = "failed";
+    job.lastError = "Çalıştırılacak workflow adımı bulunamadı.";
+    job.completedAt = now();
+    syncQueueItem(state, job);
+    writeState(state);
+    return null;
+  }
+
+  job.status = "running";
+  job.workerId = LOCAL_WORKER_ID;
+  job.startedAt ||= now();
+  job.leaseExpiresAt = new Date(Date.now() + 90_000).toISOString();
+  syncQueueItem(state, job);
+  const worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
+  if (worker) {
+    worker.status = "running";
+    worker.lastSeenAt = now();
+  }
+  const resolvedValue = resolveStepCredential(state, workflow, step);
+  state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${job.currentStepIndex + 1}/${version.steps.length} adımı yerel ajan tarafından alındı: ${step.title}.` });
+  writeState(state);
+  return { jobId: job.id, workflowName: workflow.name, stepIndex: job.currentStepIndex, totalSteps: version.steps.length, step, resolvedValue };
+}
+
+export function completeAgentStep(input: { jobId: string; stepIndex: number; summary?: string }) {
+  const state = readState();
+  const job = findTenantRecord(state.jobs, input.jobId);
+  if (job.status !== "running" || job.currentStepIndex !== input.stepIndex) throw new Error("Bu adım artık aktif değil veya başka bir ajan tarafından tamamlandı.");
+  const workflow = findTenantRecord(state.workflows, job.workflowId);
+  const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
+  if (!version) throw new Error("Workflow sürümü bulunamadı.");
+  const completedTitle = version.steps[input.stepIndex]?.title || `${input.stepIndex + 1}. adım`;
+  job.currentStepIndex += 1;
+  job.retryCount = 0;
+  job.leaseExpiresAt = undefined;
+  state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${completedTitle} tamamlandı${input.summary ? `: ${sanitizeLog(input.summary)}` : "."}` });
+  queueJobAtCurrentStep(state, job, workflow, version.steps, input.summary || completedTitle);
+  const worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
+  if (worker) worker.status = job.status === "running" ? "running" : "idle";
+  audit(state, "robot", `${workflow.name} workflow adımı tamamlandı.`, "job", job.id);
+  writeState(state);
+  return job;
+}
+
+export function failAgentStep(input: { jobId: string; stepIndex: number; error: string }) {
+  const state = readState();
+  const job = findTenantRecord(state.jobs, input.jobId);
+  if (job.currentStepIndex !== input.stepIndex) throw new Error("Hata bildirilen adım artık aktif değil.");
+  job.retryCount += 1;
+  job.lastError = sanitizeLog(input.error);
+  job.leaseExpiresAt = undefined;
+  job.status = job.retryCount <= job.maxRetries ? "queued" : "failed";
+  if (job.status === "failed") job.completedAt = now();
+  syncQueueItem(state, job);
+  state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "error", message: `Adım hatası (${job.retryCount}/${job.maxRetries}): ${job.lastError}` });
+  const worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
+  if (worker) worker.status = "idle";
+  writeState(state);
+  return job;
 }
 
 export function extractDocument(input: { name: string; type: DocumentRecord["type"] }) {
@@ -1000,10 +1254,21 @@ export function updateDocumentField(documentId: string, fieldId: string, value: 
   return document;
 }
 
-export function createConnector(input: { type: ConnectorAccount["type"]; name: string; secret: string }) {
-  if (sensitiveSecretPattern.test(input.name) || sensitiveSecretPattern.test(input.secret)) {
+export function createConnector(input: {
+  type: ConnectorAccount["type"];
+  name: string;
+  secret?: string;
+  username?: string;
+  password?: string;
+  loginUrl?: string;
+}) {
+  if (sensitiveSecretPattern.test(input.name)) {
     throw new Error("Güvenlik politikası: e-imza PIN'i, OTP, SMS kodu, banka şifresi veya kişisel elektronik imza saklanamaz.");
   }
+  const payload: { username?: string; password?: string; secret?: string } = input.username || input.password
+    ? { username: input.username ?? "", password: input.password ?? "" }
+    : { secret: input.secret ?? "" };
+  if (!payload.username && !payload.password && !payload.secret) throw new Error("Hesap için kullanıcı bilgisi veya secret gerekli.");
 
   const state = readState();
   const dashboard = getDashboard();
@@ -1017,21 +1282,31 @@ export function createConnector(input: { type: ConnectorAccount["type"]; name: s
     type: input.type,
     name: input.name,
     status: "connected",
-    secretPreview: maskSecret(input.secret),
+    secretPreview: maskSecret(input.password || input.secret || ""),
+    loginUrl: input.loginUrl,
+    usernamePreview: input.username ? maskUsername(input.username) : undefined,
     createdAt: now()
   };
-  state.connectors.unshift(connector);
-  state.credentials.unshift({
+  const credential: CredentialVaultItem = {
     id: id("cred"),
     organizationId: DEFAULT_ORG_ID,
     connectorId: connector.id,
-    label: `${input.name} secret`,
-    encryptedSecret: encryptSecret(input.secret),
+    label: `${input.name} hesabı`,
+    encryptedSecret: encryptSecret(JSON.stringify(payload)),
+    loginUrl: input.loginUrl,
+    usernamePreview: connector.usernamePreview,
     createdAt: now()
-  });
-  audit(state, "user", `${input.name} bağlayıcısı eklendi ve secret maskelendi.`, "connector", connector.id);
+  };
+  connector.credentialId = credential.id;
+  state.connectors.unshift(connector);
+  state.credentials.unshift(credential);
+  audit(state, "user", `${input.name} hesap profili eklendi; hassas alanlar şifrelenerek kasaya alındı.`, "connector", connector.id);
   writeState(state);
   return connector;
+}
+
+export function listCredentialProfiles() {
+  return readState().credentials.filter((item) => item.organizationId === DEFAULT_ORG_ID).map(toCredentialProfile);
 }
 
 export function listJobs() {
@@ -1102,14 +1377,118 @@ function findTenantRecord<T extends { id: string; organizationId: string }>(reco
 
 function maskSecret(secret: string) {
   if (!secret) return "Boş secret";
-  return `${"•".repeat(Math.min(8, secret.length))} ${secret.slice(-3)}`;
+  return `${"•".repeat(Math.min(12, Math.max(6, secret.length)))}`;
+}
+
+function maskUsername(username: string) {
+  const [name, domain] = username.split("@");
+  const maskedName = name.length < 3 ? `${name.slice(0, 1)}***` : `${name.slice(0, 2)}***${name.slice(-1)}`;
+  return domain ? `${maskedName}@${domain}` : maskedName;
 }
 
 function encryptSecret(secret: string) {
-  const key = crypto.createHash("sha256").update(process.env.CREDENTIAL_VAULT_KEY ?? "otoflow-local-development-key").digest();
+  const key = crypto.createHash("sha256").update(vaultKey()).digest();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${iv.toString("base64")}.${tag.toString("base64")}.${encrypted.toString("base64")}`;
+}
+
+function decryptSecret(value: string) {
+  const [ivValue, tagValue, encryptedValue] = value.split(".");
+  if (!ivValue || !tagValue || !encryptedValue) throw new Error("Kasa kaydı geçersiz.");
+  const key = crypto.createHash("sha256").update(vaultKey()).digest();
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivValue, "base64"));
+  decipher.setAuthTag(Buffer.from(tagValue, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(encryptedValue, "base64")), decipher.final()]).toString("utf8");
+}
+
+function vaultKey() {
+  const configured = process.env.CREDENTIAL_VAULT_KEY;
+  if (configured) return configured;
+  if (process.env.NODE_ENV === "production") throw new Error("CREDENTIAL_VAULT_KEY üretim ortamında zorunludur.");
+  return "otoflow-local-development-key";
+}
+
+function resolveStepCredential(state: SaasState, workflow: Workflow, step: WorkflowStep) {
+  const field = step.parameters?.credentialField;
+  if (!field) return step.parameters?.value;
+  const credentialId = step.credentialId || workflow.credentialId;
+  if (!credentialId) throw new Error(`${step.title} için hesap profili bağlanmamış.`);
+  const credential = findTenantRecord(state.credentials, credentialId);
+  const decrypted = decryptSecret(credential.encryptedSecret);
+  let payload: { username?: string; password?: string; secret?: string };
+  try {
+    payload = JSON.parse(decrypted) as typeof payload;
+  } catch {
+    payload = { secret: decrypted };
+  }
+  const value = payload[field] || (field === "password" ? payload.secret : undefined);
+  if (!value) throw new Error(`${credential.label} içinde ${field === "username" ? "kullanıcı adı" : "şifre"} bulunamadı.`);
+  return value;
+}
+
+function sanitizeLog(value: string) {
+  return value
+    .replace(/(password|şifre|sifre|secret|token|otp|pin)\s*[:=]\s*\S+/gi, "$1=••••••")
+    .slice(0, 500);
+}
+
+export function exportAutomationPackage(workflowId: string): AutomationPackage {
+  const state = readState();
+  const workflow = findTenantRecord(state.workflows, workflowId);
+  const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
+  if (!version) throw new Error("Workflow sürümü bulunamadı.");
+  const credential = workflow.credentialId ? state.credentials.find((item) => item.id === workflow.credentialId) : undefined;
+  return {
+    format: "otoflow.automation",
+    version: 1,
+    exportedAt: now(),
+    metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger },
+    steps: version.steps.map((step) => ({ ...step, credentialId: undefined })),
+    variables: [],
+    requiredCredential: credential ? { alias: "primary", label: credential.label, loginUrl: credential.loginUrl } : undefined
+  };
+}
+
+export function importAutomationPackage(pkg: AutomationPackage) {
+  const state = readState();
+  const workflowId = id("wf");
+  const versionId = id("wfv");
+  const createdAt = now();
+  const workflow: Workflow = {
+    id: workflowId,
+    organizationId: DEFAULT_ORG_ID,
+    name: pkg.metadata.name,
+    description: pkg.metadata.description,
+    category: pkg.metadata.category,
+    trigger: pkg.metadata.trigger,
+    status: pkg.requiredCredential ? "draft" : "published",
+    currentVersionId: versionId,
+    createdAt
+  };
+  const steps = pkg.steps.map((step) => ({ ...step, id: id("step"), credentialId: undefined }));
+  state.workflows.unshift(workflow);
+  state.workflowVersions.unshift({ id: versionId, workflowId, version: 1, steps, publishedAt: workflow.status === "published" ? createdAt : undefined });
+  audit(state, "user", `${workflow.name} .otomasyon dosyasından içe aktarıldı.`, "workflow", workflow.id);
+  writeState(state);
+  return workflow;
+}
+
+export function updateWorkflowConfiguration(workflowId: string, input: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean }) {
+  const state = readState();
+  const workflow = findTenantRecord(state.workflows, workflowId);
+  if (input.credentialId) findTenantRecord(state.credentials, input.credentialId);
+  const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
+  if (!version) throw new Error("Workflow sürümü bulunamadı.");
+  if (input.steps) version.steps = input.steps.map((step) => ({ ...step, credentialId: step.credentialId || input.credentialId }));
+  if (input.credentialId) workflow.credentialId = input.credentialId;
+  if (input.publish) {
+    workflow.status = "published";
+    version.publishedAt = now();
+  }
+  audit(state, "user", `${workflow.name} çalışma ayarları güncellendi.`, "workflow", workflow.id);
+  writeState(state);
+  return { ...workflow, version };
 }

@@ -2,6 +2,7 @@ import type { Actor, CustomsFile, DashboardPayload } from "../shared/types";
 import type {
   ApprovalTask,
   AutomationDraft,
+  AutomationPackage,
   AutomationOpportunity,
   CompliancePolicy,
   ConnectorAccount,
@@ -10,7 +11,8 @@ import type {
   RecorderEvent,
   RecordingSession,
   SaasDashboard,
-  Workflow
+  Workflow,
+  WorkflowStep
 } from "../shared/saasTypes";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -41,8 +43,23 @@ export const api = {
     request<RecordingSession>("/api/recordings", { method: "POST", body: JSON.stringify(body) }),
   addRecordingEvent: (id: string, body: Omit<RecorderEvent, "id" | "ts">) =>
     request<RecorderEvent>(`/api/recordings/${id}/events`, { method: "POST", body: JSON.stringify(body) }),
+  uploadRecordingVideo: (id: string, video: Blob) => {
+    const formData = new FormData();
+    formData.append("video", video, `screen-${id}.webm`);
+    return request<RecordingSession>(`/api/recordings/${id}/video`, { method: "POST", body: formData });
+  },
   analyzeRecording: (id: string) => request<AutomationDraft>(`/api/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
+  updateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
+    request<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   publishAutomationDraft: (id: string) => request<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),
+  configureWorkflow: (id: string, body: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean }) =>
+    request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  importAutomation: (body: AutomationPackage) => request<Workflow>("/api/workflows/import", { method: "POST", body: JSON.stringify(body) }),
+  exportAutomation: async (id: string) => {
+    const response = await fetch(`/api/workflows/${id}/export`);
+    if (!response.ok) throw new Error("Otomasyon dosyası indirilemedi.");
+    return { blob: await response.blob(), disposition: response.headers.get("content-disposition") };
+  },
   runWorkflow: (id: string, payloadSummary: string) =>
     request<Job>(`/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ payloadSummary }) }),
   publishWorkflow: (id: string) => request<Workflow>(`/api/workflows/${id}/publish`, { method: "POST", body: "{}" }),
@@ -63,8 +80,23 @@ export const api = {
     request<DocumentRecord>(`/api/documents/${id}/fields`, { method: "PATCH", body: JSON.stringify(body) }),
   createOpportunity: (body: Pick<AutomationOpportunity, "title" | "department" | "monthlyVolume" | "minutesPerTask" | "errorRisk" | "feasibility">) =>
     request<AutomationOpportunity>("/api/opportunities", { method: "POST", body: JSON.stringify(body) }),
-  createConnector: (body: { type: ConnectorAccount["type"]; name: string; secret: string }) =>
+  createConnector: (body: { type: ConnectorAccount["type"]; name: string; secret?: string; username?: string; password?: string; loginUrl?: string }) =>
     request<ConnectorAccount>("/api/connectors", { method: "POST", body: JSON.stringify(body) }),
+  localAgentHealth: async () => {
+    const response = await fetch("http://127.0.0.1:4687/health");
+    if (!response.ok) throw new Error("Yerel ajan çevrimdışı.");
+    return response.json() as Promise<{ ok: boolean; platform: string; recording: boolean }>;
+  },
+  startDesktopRecording: (sessionId: string) => fetch("http://127.0.0.1:4687/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }).then(async (response) => {
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Masaüstü kaydı başlatılamadı.");
+    return payload as { ok: boolean; recording: boolean };
+  }),
+  stopDesktopRecording: () => fetch("http://127.0.0.1:4687/record/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(async (response) => {
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Masaüstü kaydı durdurulamadı.");
+    return payload as { ok: boolean; stopped: boolean };
+  }),
   createPolicy: (body: Pick<CompliancePolicy, "name" | "description" | "policyType">) =>
     request<CompliancePolicy>("/api/compliance/policies", { method: "POST", body: JSON.stringify(body) }),
   files: () => request<CustomsFile[]>("/api/files"),

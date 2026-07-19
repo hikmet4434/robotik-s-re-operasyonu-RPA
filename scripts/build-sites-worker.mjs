@@ -247,6 +247,7 @@ function seedState() {
       { id: "con_email", organizationId: ORG_ID, type: "email", name: "Operasyon E-posta", status: "connected", secretPreview: "**** demo", createdAt: ts },
       { id: "con_sheet", organizationId: ORG_ID, type: "google_sheets", name: "Finans Tablosu", status: "needs_attention", secretPreview: "OAuth gerekli", createdAt: ts },
     ],
+    credentialProfiles: [],
     policies: [
       {
         id: "pol_approval",
@@ -371,6 +372,7 @@ function dashboard() {
     approvals: state.approvals,
     documents: state.documents,
     connectors: state.connectors,
+    credentialProfiles: state.credentialProfiles,
     policies: state.policies,
     audit: state.audit.slice(0, 80),
     workers: state.workers,
@@ -407,6 +409,7 @@ async function handleApi(request, url) {
   if (method === "GET" && path === "/api/jobs") return json(state.jobs);
   if (method === "GET" && path === "/api/approvals") return json(state.approvals);
   if (method === "GET" && path === "/api/connectors") return json(state.connectors);
+  if (method === "GET" && path === "/api/credentials") return json(state.credentialProfiles);
   if (method === "GET" && path === "/api/compliance/audit") return json(state.audit);
   if (method === "GET" && path === "/api/compliance/policies") return json({ policies: state.policies, audit: state.audit });
   if (method === "GET" && path === "/api/files") return json(state.files);
@@ -431,6 +434,19 @@ async function handleApi(request, url) {
     if (body.type === "screen.start") session.screenRecordingStatus = "recording";
     if (body.type === "screen.stop") session.screenRecordingStatus = "captured";
     return json(event, 201);
+  }
+
+  match = path.match(/^\\/api\\/recordings\\/([^/]+)\\/video$/);
+  if (method === "POST" && match) {
+    const session = state.recordingSessions.find((item) => item.id === match[1]);
+    if (!session) return error("Kayit oturumu bulunamadi.", 404);
+    const form = await request.formData().catch(() => null);
+    const video = form?.get("video");
+    session.screenRecordingStatus = "captured";
+    session.videoFileName = "sites-preview.webm";
+    session.videoMimeType = typeof video === "object" && video && "type" in video ? video.type : "video/webm";
+    session.videoSizeBytes = typeof video === "object" && video && "size" in video ? video.size : 0;
+    return json(session, 201);
   }
 
   match = path.match(/^\\/api\\/recordings\\/([^/]+)\\/analyze$/);
@@ -467,12 +483,61 @@ async function handleApi(request, url) {
   if (method === "POST" && match) {
     const draft = state.automationDrafts.find((item) => item.id === match[1]);
     if (!draft) return error("Taslak bulunamadi.", 404);
-    const workflow = { id: id("wf"), organizationId: ORG_ID, name: draft.title, category: "genel", status: "published", trigger: "Recorder Studio kaydindan uretildi", description: draft.objective, currentVersionId: id("wfv"), createdAt: now() };
+    const workflow = { id: id("wf"), organizationId: ORG_ID, name: draft.title, category: "genel", status: "published", trigger: "Recorder Studio kaydindan uretildi", description: draft.objective, currentVersionId: id("wfv"), credentialId: draft.credentialId, steps: draft.steps, createdAt: now() };
     state.workflows.unshift(workflow);
     draft.status = "published";
     draft.publishedWorkflowId = workflow.id;
     audit(state, "user", workflow.name + " workflow olarak yayina alindi.", "workflow", workflow.id);
     return json(workflow, 201);
+  }
+
+  match = path.match(/^\\/api\\/automation-drafts\\/([^/]+)$/);
+  if (method === "PATCH" && match) {
+    const draft = state.automationDrafts.find((item) => item.id === match[1]);
+    if (!draft) return error("Taslak bulunamadi.", 404);
+    const body = await readJson(request);
+    if (Array.isArray(body.steps) && body.steps.length) draft.steps = body.steps;
+    draft.credentialId = body.credentialId || draft.credentialId;
+    draft.title = body.title || draft.title;
+    draft.objective = body.objective || draft.objective;
+    draft.approvalGates = draft.steps.filter((step) => step.requiresApproval || step.type === "approval.wait").map((step) => ({ title: step.title, reason: step.approvalPrompt || step.description, riskLevel: step.riskLevel }));
+    return json(draft);
+  }
+
+  match = path.match(/^\\/api\\/workflows\\/([^/]+)\\/export$/);
+  if (method === "GET" && match) {
+    const workflow = state.workflows.find((item) => item.id === match[1]);
+    if (!workflow) return error("Workflow bulunamadi.", 404);
+    const pkg = {
+      format: "otoflow.automation",
+      version: 1,
+      exportedAt: now(),
+      metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger },
+      steps: (workflow.steps || [seedStep("browser.wait", "Teknik kullanici ayari", "Canli ajan sunucusunda adimlari yapilandirin.", false, "low")]).map((step) => ({ ...step, credentialId: undefined })),
+      variables: [],
+      requiredCredential: workflow.credentialId ? { alias: "primary", label: "Bagli hesap profili" } : undefined,
+    };
+    return new Response(JSON.stringify(pkg, null, 2), { headers: { "content-type": "application/vnd.otoflow.automation+json; charset=utf-8", "content-disposition": 'attachment; filename="' + workflow.name.replace(/[^a-z0-9_-]+/gi, "-") + '.otomasyon"' } });
+  }
+
+  if (method === "POST" && path === "/api/workflows/import") {
+    const pkg = await readJson(request);
+    if (pkg.format !== "otoflow.automation" || pkg.version !== 1 || !Array.isArray(pkg.steps)) return error("Gecersiz .otomasyon dosyasi.");
+    const workflow = { id: id("wf"), organizationId: ORG_ID, name: pkg.metadata.name, category: pkg.metadata.category || "genel", status: pkg.requiredCredential ? "draft" : "published", trigger: pkg.metadata.trigger, description: pkg.metadata.description, currentVersionId: id("wfv"), steps: pkg.steps.map((step) => ({ ...step, id: id("step"), credentialId: undefined })), createdAt: now() };
+    state.workflows.unshift(workflow);
+    audit(state, "user", workflow.name + " .otomasyon dosyasindan ice aktarildi.", "workflow", workflow.id);
+    return json(workflow, 201);
+  }
+
+  match = path.match(/^\\/api\\/workflows\\/([^/]+)$/);
+  if (method === "PATCH" && match) {
+    const workflow = state.workflows.find((item) => item.id === match[1]);
+    if (!workflow) return error("Workflow bulunamadi.", 404);
+    const body = await readJson(request);
+    workflow.credentialId = body.credentialId || workflow.credentialId;
+    if (Array.isArray(body.steps)) workflow.steps = body.steps;
+    if (body.publish) workflow.status = "published";
+    return json(workflow);
   }
 
   match = path.match(/^\\/api\\/workflows\\/([^/]+)\\/run$/);
@@ -483,7 +548,8 @@ async function handleApi(request, url) {
     const body = await readJson(request);
     const requiresApproval = workflow.id === "wf_invoice" || workflow.id === "wf_customs" || workflow.category === "genel";
     const queueItemId = id("qitem");
-    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
+    const totalSteps = Math.max(1, (workflow.steps || []).length);
+    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, currentStepIndex: requiresApproval ? 0 : totalSteps, totalSteps, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
     state.jobs.unshift(job);
     if (requiresApproval) {
       state.approvals.unshift({ id: id("app"), organizationId: ORG_ID, jobId: job.id, title: workflow.name + " icin onay", summary: "Bu otomasyon riskli veya yasal/finansal etkili bir adim iceriyor.", riskLevel: workflow.id === "wf_customs" ? "critical" : "high", status: "pending", diff: [{ label: "Robot ciktisi", before: "Taslak", after: body.payloadSummary || "Demo calistirma" }, { label: "Final aksiyon", before: "Kapali", after: "Onay sonrasi calisacak" }], dueAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now() });
@@ -543,10 +609,14 @@ async function handleApi(request, url) {
 
   if (method === "POST" && path === "/api/connectors") {
     const body = await readJson(request);
-    if (/(e[-\\s]?imza|pin|sms|otp|banka|mobil imza)/i.test(body.secret || "")) return error("E-imza PIN'i, OTP, SMS kodu ve banka sifresi saklanamaz.");
-    const connector = { id: id("con"), organizationId: ORG_ID, type: body.type || "webhook", name: body.name || "Yeni Webhook", status: "connected", secretPreview: "**** " + String(body.secret || "demo").slice(-4), createdAt: now() };
+    if (/(e[-\\s]?imza|pin|sms|otp|banka|mobil imza)/i.test(body.name || "")) return error("E-imza PIN'i, OTP, SMS kodu ve banka sifresi saklanamaz.");
+    const credentialId = id("cred");
+    const username = String(body.username || "");
+    const usernamePreview = username ? username.slice(0, 2) + "***" : undefined;
+    const connector = { id: id("con"), organizationId: ORG_ID, type: body.type || "portal", name: body.name || "ERP Hesabi", status: "connected", secretPreview: "********", loginUrl: body.loginUrl, usernamePreview, credentialId, createdAt: now() };
     state.connectors.unshift(connector);
-    audit(state, "user", connector.name + " baglayicisi eklendi.", "connector", connector.id);
+    state.credentialProfiles.unshift({ id: credentialId, connectorId: connector.id, label: connector.name + " hesabi", loginUrl: connector.loginUrl, usernamePreview, createdAt: now() });
+    audit(state, "user", connector.name + " onizleme profili eklendi; parola Sites ortaminda saklanmadi.", "connector", connector.id);
     return json(connector, 201);
   }
 

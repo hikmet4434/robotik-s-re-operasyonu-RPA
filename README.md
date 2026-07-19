@@ -6,7 +6,10 @@ KOBİ odaklı, uyum katmanlı RPA SaaS prototipi.
 
 - Recorder Studio: kullanıcı işini kaydetme, olayları analiz etme ve workflow taslağı üretme.
 - Chrome Recorder extension: dış web uygulamalarında tıklama, input, form ve URL olaylarını yakalama.
-- Local Agent bridge: masaüstü/ERP işleri için yerel event köprüsü.
+- Local Agent: Playwright ile gerçek Chrome/ERP adımlarını, macOS Accessibility ile masaüstü tıklama/yazma/kısayol adımlarını çalıştırır.
+- Adım bazlı teknik kullanıcı onayı: robot seçilen adımda durur ve onaydan sonra kaldığı yerden devam eder.
+- Şifresiz `.otomasyon` içe/dışa aktarma ve AES-256-GCM ile şifrelenmiş hesap kasası.
+- WEBM/MP4 ekran kaydını iş oturumuna yükleme ve masaüstü tıklama kaydı.
 - Workflow, job, queue, approval, doküman işleme, entegrasyon ve KVKK/audit modülleri.
 - E-imza PIN'i, OTP, SMS kodu, banka şifresi ve secret alanlarını saklamama/maskleme politikası.
 
@@ -14,7 +17,8 @@ KOBİ odaklı, uyum katmanlı RPA SaaS prototipi.
 
 ```bash
 npm install
-npm run dev
+npm run setup:agent
+npm run dev:all
 ```
 
 Uygulama:
@@ -42,8 +46,19 @@ extension/chrome-recorder
 
 ```bash
 cd agents/local-agent
-OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm start
+npm start
 ```
+
+macOS ilk kullanımda Terminal/Node için **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** izni ister. Ekran videosu kaydında tarayıcının **Ekran ve Sistem Sesi Kaydı** izni gerekir.
+
+## Gerçek Çalışma Döngüsü
+
+1. Entegrasyonlar ekranında ERP/portal hesabını kasaya ekleyin.
+2. Recorder Studio'da iş kaydını başlatın; web için Chrome eklentisini, masaüstü için Yerel Ajan kaydını kullanın.
+3. Kaydı otomasyona çevirin, her adımın seçici/koordinat/değerini kontrol edin ve onay istenecek adımları işaretleyin.
+4. Hesap profilini bağlayıp workflow'u yayınlayın.
+5. Çalıştırıldığında Yerel Ajan adımları gerçek uygulamada yürütür; Onaylar ekranında seçilen kapılarda bekler.
+6. Otomasyonlar ekranından şifre içermeyen `.otomasyon` dosyasını dışa aktarın.
 
 ## Gerçek Doküman Girişi
 

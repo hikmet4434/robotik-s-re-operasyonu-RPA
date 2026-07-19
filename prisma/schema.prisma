@@ -50,11 +50,11 @@ enum RiskLevel {
 }
 
 model Organization {
-  id          String       @id @default(cuid())
+  id          String         @id @default(cuid())
   name        String
   taxNumber   String
   sector      String
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime       @default(now())
   memberships Membership[]
   workflows   Workflow[]
   jobs        Job[]
@@ -64,12 +64,12 @@ model Organization {
 }
 
 model User {
-  id          String       @id @default(cuid())
-  name        String
-  email       String       @unique
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
   passwordHash String?
-  createdAt   DateTime     @default(now())
-  memberships Membership[]
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
 }
 
 model Membership {
@@ -117,17 +117,18 @@ model AutomationOpportunity {
 }
 
 model Workflow {
-  id               String            @id @default(cuid())
-  organizationId   String
-  name             String
-  category         String
-  status           WorkflowStatus
-  trigger          String
-  description      String
-  createdAt        DateTime          @default(now())
-  organization     Organization      @relation(fields: [organizationId], references: [id])
-  versions         WorkflowVersion[]
-  jobs             Job[]
+  id             String            @id @default(cuid())
+  organizationId String
+  name           String
+  category       String
+  status         WorkflowStatus
+  trigger        String
+  description    String
+  credentialId   String?
+  createdAt      DateTime          @default(now())
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  versions       WorkflowVersion[]
+  jobs           Job[]
 }
 
 model WorkflowVersion {
@@ -147,11 +148,14 @@ model WorkflowStep {
   description       String
   requiresApproval  Boolean
   riskLevel         RiskLevel
+  approvalPrompt    String?
+  credentialId      String?
+  parameters        Json?
   version           WorkflowVersion @relation(fields: [workflowVersionId], references: [id])
 }
 
 model RecordingSession {
-  id                    String   @id @default(cuid())
+  id                    String            @id @default(cuid())
   organizationId        String
   title                 String
   goal                  String
@@ -159,8 +163,11 @@ model RecordingSession {
   status                String
   screenRecordingStatus String
   eventCount            Int
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  videoFileName         String?
+  videoMimeType         String?
+  videoSizeBytes        Int?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
   events                RecorderEvent[]
   drafts                AutomationDraft[]
 }
@@ -181,20 +188,21 @@ model RecorderEvent {
 }
 
 model AutomationDraft {
-  id                 String           @id @default(cuid())
-  organizationId     String
-  recordingSessionId String
-  title              String
-  objective          String
-  confidence         Int
-  status             String
-  steps              Json
-  variables          Json
-  approvalGates      Json
-  subAutomations     Json
-  createdAt          DateTime         @default(now())
+  id                  String           @id @default(cuid())
+  organizationId      String
+  recordingSessionId  String
+  title               String
+  objective           String
+  confidence          Int
+  status              String
+  steps               Json
+  variables           Json
+  approvalGates       Json
+  subAutomations      Json
+  createdAt           DateTime         @default(now())
   publishedWorkflowId String?
-  session            RecordingSession @relation(fields: [recordingSessionId], references: [id])
+  credentialId        String?
+  session             RecordingSession @relation(fields: [recordingSessionId], references: [id])
 }
 
 model Queue {
@@ -218,20 +226,24 @@ model QueueItem {
 }
 
 model Job {
-  id             String      @id @default(cuid())
-  organizationId String
-  workflowId     String
-  queueItemId    String
-  workerId       String
-  status         JobStatus
-  retryCount     Int
-  maxRetries     Int
-  startedAt      DateTime?
-  completedAt    DateTime?
-  createdAt      DateTime    @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  workflow       Workflow    @relation(fields: [workflowId], references: [id])
-  logs           JobRunLog[]
+  id               String       @id @default(cuid())
+  organizationId   String
+  workflowId       String
+  queueItemId      String
+  workerId         String
+  status           JobStatus
+  retryCount       Int
+  maxRetries       Int
+  currentStepIndex Int          @default(0)
+  totalSteps       Int          @default(0)
+  lastError        String?
+  leaseExpiresAt   DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime     @default(now())
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  workflow         Workflow     @relation(fields: [workflowId], references: [id])
+  logs             JobRunLog[]
 }
 
 model JobRunLog {
@@ -257,6 +269,8 @@ model ApprovalTask {
   dueAt          DateTime
   createdAt      DateTime       @default(now())
   resolvedAt     DateTime?
+  stepIndex      Int?
+  resumeAction   String?
   organization   Organization   @relation(fields: [organizationId], references: [id])
 }
 
@@ -283,22 +297,36 @@ model ExtractedField {
 }
 
 model ConnectorAccount {
-  id             String   @id @default(cuid())
-  organizationId String
-  type           String
-  name           String
-  status         String
-  secretPreview  String?
-  createdAt      DateTime @default(now())
+  id              String   @id @default(cuid())
+  organizationId  String
+  type            String
+  name            String
+  status          String
+  secretPreview   String?
+  loginUrl        String?
+  usernamePreview String?
+  credentialId    String?
+  createdAt       DateTime @default(now())
 }
 
 model CredentialVaultItem {
+  id              String   @id @default(cuid())
+  organizationId  String
+  connectorId     String
+  label           String
+  encryptedSecret String
+  loginUrl        String?
+  usernamePreview String?
+  createdAt       DateTime @default(now())
+}
+
+model RobotWorker {
   id             String   @id @default(cuid())
   organizationId String
-  connectorId    String
-  label          String
-  encryptedSecret String
-  createdAt      DateTime @default(now())
+  name           String
+  runtime        String
+  status         String
+  lastSeenAt     DateTime
 }
 
 model CompliancePolicy {
@@ -321,7 +349,7 @@ model ConsentRecord {
 }
 
 model RetentionRule {
-  id             String   @id @default(cuid())
+  id             String  @id @default(cuid())
   organizationId String
   dataType       String
   retentionDays  Int

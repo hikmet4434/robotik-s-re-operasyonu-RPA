@@ -1,20 +1,21 @@
 # OtoFlow Local Agent
 
-Bu ajan masaüstü uygulamaları, yerel ERP ekranları, Excel masaüstü ve uzak masaüstü gibi browser dışı işlerin ileride kaydedilmesi için temel bridge katmanıdır.
+Bu ajan web ve masaüstü workflow adımlarını kullanıcının bilgisayarında gerçek olarak yürütür.
 
-İlk sürümde:
+Desteklenen çalışma alanları:
 
-- OtoFlow Recorder session'a event gönderir.
-- Secret/PIN/OTP/şifre/banka/e-imza benzeri değerleri maskeler.
-- Lokal HTTP bridge sağlar: `http://localhost:4687/event`.
+- Chrome/Edge/Chromium: sayfa açma, tıklama, alan doldurma, seçim, bekleme ve veri okuma.
+- macOS: uygulama açma, ekran koordinatına tıklama, yazma, kısayol ve bekleme.
+- macOS masaüstü tıklamalarını Recorder oturumuna aktarma.
+- İş kuyruğunu dinleme, kontrollü tekrar deneme ve adım bazlı onaydan sonra devam.
+- Şifreleri loglamadan yalnızca aktif credential adımında kullanma.
 
 ## Çalıştırma
 
 ```bash
 cd agents/local-agent
-OTOFLOW_API_BASE=http://localhost:4100 \
-OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx \
-npm start
+npm install
+OTOFLOW_API_BASE=http://localhost:4100 npm start
 ```
 
 Demo event:
@@ -23,9 +24,6 @@ Demo event:
 OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm run demo:event
 ```
 
-## Sonraki gerçek ajan fazı
+`OTOFLOW_AGENT_TOKEN` sunucudaki değerle aynı olmalıdır. Üretimde varsayılan geliştirme anahtarını kullanmayın.
 
-- macOS Accessibility API / Windows UI Automation adapter.
-- OCR/screenshot ile ekran bölgesi tanıma.
-- Excel/ERP adapterleri.
-- Attended robot: kullanıcı bilgisayarında çalışır, riskli aksiyonda OtoFlow onayı bekler.
+macOS tıklama/yazma ve kayıt işlemleri için Terminal veya Node uygulamasına Erişilebilirlik izni verin.

@@ -12,7 +12,14 @@ export type WorkflowStepType =
   | "browser.navigate"
   | "browser.click"
   | "browser.type"
+  | "browser.select"
+  | "browser.wait"
   | "browser.extract"
+  | "desktop.launch"
+  | "desktop.click"
+  | "desktop.type"
+  | "desktop.hotkey"
+  | "desktop.wait"
   | "http.request"
   | "document.extract"
   | "approval.wait"
@@ -63,6 +70,9 @@ export interface RecordingSession {
   status: "draft" | "recording" | "analyzed" | "published";
   screenRecordingStatus: "not_started" | "recording" | "captured";
   eventCount: number;
+  videoFileName?: string;
+  videoMimeType?: string;
+  videoSizeBytes?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +89,7 @@ export interface AutomationDraft {
   variables: { key: string; label: string; example: string; source: string }[];
   approvalGates: { title: string; reason: string; riskLevel: RiskLevel }[];
   subAutomations: { name: string; purpose: string; stepIds: string[] }[];
+  credentialId?: string;
   createdAt: string;
   publishedWorkflowId?: string;
 }
@@ -149,6 +160,21 @@ export interface WorkflowStep {
   description: string;
   requiresApproval: boolean;
   riskLevel: RiskLevel;
+  approvalPrompt?: string;
+  credentialId?: string;
+  parameters?: {
+    url?: string;
+    selector?: string;
+    value?: string;
+    option?: string;
+    appName?: string;
+    x?: number;
+    y?: number;
+    keys?: string[];
+    timeoutMs?: number;
+    credentialField?: "username" | "password";
+    outputKey?: string;
+  };
 }
 
 export interface WorkflowVersion {
@@ -168,6 +194,7 @@ export interface Workflow {
   trigger: string;
   description: string;
   currentVersionId: string;
+  credentialId?: string;
   createdAt: string;
 }
 
@@ -175,7 +202,7 @@ export interface RobotWorker {
   id: string;
   organizationId: string;
   name: string;
-  runtime: "cloud";
+  runtime: "cloud" | "local";
   status: "idle" | "running" | "offline";
   lastSeenAt: string;
 }
@@ -207,6 +234,10 @@ export interface Job {
   status: JobStatus;
   retryCount: number;
   maxRetries: number;
+  currentStepIndex: number;
+  totalSteps: number;
+  lastError?: string;
+  leaseExpiresAt?: string;
   startedAt?: string;
   completedAt?: string;
   createdAt: string;
@@ -234,6 +265,8 @@ export interface ApprovalTask {
   dueAt: string;
   createdAt: string;
   resolvedAt?: string;
+  stepIndex?: number;
+  resumeAction?: "execute" | "advance";
 }
 
 export interface SaasExtractedField {
@@ -266,6 +299,9 @@ export interface ConnectorAccount {
   name: string;
   status: ConnectorStatus;
   secretPreview?: string;
+  loginUrl?: string;
+  usernamePreview?: string;
+  credentialId?: string;
   createdAt: string;
 }
 
@@ -275,7 +311,46 @@ export interface CredentialVaultItem {
   connectorId: string;
   label: string;
   encryptedSecret: string;
+  loginUrl?: string;
+  usernamePreview?: string;
   createdAt: string;
+}
+
+export interface CredentialProfile {
+  id: string;
+  connectorId: string;
+  label: string;
+  loginUrl?: string;
+  usernamePreview?: string;
+  createdAt: string;
+}
+
+export interface AutomationPackage {
+  format: "otoflow.automation";
+  version: 1;
+  exportedAt: string;
+  metadata: {
+    name: string;
+    description: string;
+    category: Workflow["category"];
+    trigger: string;
+  };
+  steps: WorkflowStep[];
+  variables: AutomationDraft["variables"];
+  requiredCredential?: {
+    alias: "primary";
+    label: string;
+    loginUrl?: string;
+  };
+}
+
+export interface AgentStepLease {
+  jobId: string;
+  workflowName: string;
+  stepIndex: number;
+  totalSteps: number;
+  step: WorkflowStep;
+  resolvedValue?: string;
 }
 
 export interface CompliancePolicy {
@@ -341,6 +416,7 @@ export interface SaasDashboard {
   approvals: ApprovalTask[];
   documents: DocumentRecord[];
   connectors: ConnectorAccount[];
+  credentialProfiles: CredentialProfile[];
   policies: CompliancePolicy[];
   audit: AuditEvent[];
   workers: RobotWorker[];

@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:all": "concurrently -k \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:agent\"",
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite --host 0.0.0.0",
+    "dev:agent": "npm --prefix agents/local-agent start",
+    "setup:agent": "npm --prefix agents/local-agent install",
     "build": "tsc --noEmit && vite build && node scripts/build-sites-worker.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
