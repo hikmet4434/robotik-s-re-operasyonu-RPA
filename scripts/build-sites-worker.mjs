@@ -87,6 +87,38 @@ function seedStep(type, title, description, requiresApproval, riskLevel) {
   return { id: id("step"), type, title, description, requiresApproval, riskLevel };
 }
 
+function buildAiFilePlan(body) {
+  const directoryPath = body.directoryPath || "/Users/kullanici/Documents";
+  const reportPath = body.reportPath || "/Users/kullanici/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.md";
+  const schedule = {
+    enabled: Boolean(body.cron),
+    cron: body.cron || "0 9 * * 1",
+    timezone: body.timezone || "Europe/Istanbul",
+    label: body.scheduleLabel || "Manuel baslat",
+  };
+  const step = (type, title, description, riskLevel, parameters, requiresApproval = false) => ({
+    id: id("step"), type, title, description, requiresApproval, riskLevel, parameters,
+    approvalPrompt: requiresApproval ? title + " adimi calistirilsin mi?" : undefined,
+  });
+  return {
+    name: "Haftalik dosya ve calisma ozeti",
+    description: "Son yedi gundeki yeni ve degisen dosyalari inceler, icerik ve aktivite ozeti cikarir, okunabilir bir rapor hazirlar.",
+    category: "operasyon",
+    trigger: schedule.label,
+    source: "template",
+    schedule,
+    steps: [
+      step("files.scan", "Yeni ve degisen dosyalari tara", "Izin verilen klasorde son yedi gunde eklenen veya degistirilen dosyalari listeler.", "low", { directoryPath, lookbackDays: 7, recursive: true, maxFiles: 500, outputKey: "weeklyFiles" }),
+      step("files.summarize", "Dosya iceriklerini ozetle", "Metin tabanli dosyalari icerigiyle, diger dosyalari metadata ile ozetler.", "medium", { outputKey: "fileSummaries", prompt: "Dosyalari kisa Turkce maddelerle ozetle." }),
+      step("activity.summarize", "Haftalik calismayi gunlere ayir", "Dosya hareketlerini gun ve dosya turune gore gruplar.", "low", { outputKey: "weeklyActivity" }),
+      step("report.compose", "Haftalik raporu hazirla", "Dosya ve aktivite ozetini tek raporda birlestirir.", "low", { outputKey: "weeklyReport", reportTitle: "Haftalik Dosya ve Calisma Ozeti" }),
+      step("report.save", "Raporu bilgisayara kaydet", "Raporu izin verilen hedefe kaydeder.", body.approvalAtEnd ? "medium" : "low", { reportPath, outputKey: "savedReport" }, Boolean(body.approvalAtEnd)),
+    ],
+    assumptions: ["Taranacak klasor: " + directoryPath, "Rapor hedefi: " + reportPath, "Bulut onizlemesi dosya islemlerini simule eder; yerel ajan bilgisayardaki izinli klasorlerde gercekten calisir."],
+    providerLabel: "Yerel guvenli planlayici",
+  };
+}
+
 function makeCustomsFile(number = 881) {
   const ts = now();
   const fileNo = String(number).padStart(4, "0");
@@ -504,6 +536,35 @@ async function handleApi(request, url) {
     return json(draft);
   }
 
+  if (method === "GET" && path === "/api/ai/settings") {
+    return json({ provider: "template", model: "yerel-guvenli-planlayici", baseUrl: "", hasApiKey: false, updatedAt: now() });
+  }
+
+  if (method === "PUT" && path === "/api/ai/settings") {
+    const body = await readJson(request);
+    if (body.provider !== "template") return error("Bulut onizlemesinde API anahtari saklanmaz. OpenAI, OpenRouter ve Ollama icin yerel uygulamayi kullanin.");
+    return json({ provider: "template", model: "yerel-guvenli-planlayici", baseUrl: "", hasApiKey: false, updatedAt: now() });
+  }
+
+  if (method === "POST" && path === "/api/ai/automation-plan") {
+    const body = await readJson(request);
+    if (!body.prompt || body.prompt.length < 12) return error("Otomasyon tarifini biraz daha detaylandirin.");
+    return json(buildAiFilePlan(body));
+  }
+
+  if (method === "POST" && path === "/api/ai/workflows") {
+    const body = await readJson(request);
+    if (!body.name || !Array.isArray(body.steps) || body.steps.length === 0) return error("Gecerli bir AI workflow taslagi gerekli.");
+    const workflow = {
+      id: id("wf"), organizationId: ORG_ID, name: body.name, category: body.category || "genel", status: "published",
+      trigger: body.trigger || "Manuel baslat", description: body.description, currentVersionId: id("wfv"), source: body.source || "template",
+      schedule: body.schedule, steps: body.steps, createdAt: now(),
+    };
+    state.workflows.unshift(workflow);
+    audit(state, "ai", workflow.name + " dogal dil taslagindan workflow olarak olusturuldu.", "workflow", workflow.id);
+    return json(workflow, 201);
+  }
+
   match = path.match(/^\\/api\\/workflows\\/([^/]+)\\/export$/);
   if (method === "GET" && match) {
     const workflow = state.workflows.find((item) => item.id === match[1]);
@@ -512,7 +573,7 @@ async function handleApi(request, url) {
       format: "otoflow.automation",
       version: 1,
       exportedAt: now(),
-      metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger },
+      metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger, source: workflow.source, schedule: workflow.schedule },
       steps: (workflow.steps || [seedStep("browser.wait", "Teknik kullanici ayari", "Canli ajan sunucusunda adimlari yapilandirin.", false, "low")]).map((step) => ({ ...step, credentialId: undefined })),
       variables: [],
       requiredCredential: workflow.credentialId ? { alias: "primary", label: "Bagli hesap profili" } : undefined,
@@ -523,7 +584,7 @@ async function handleApi(request, url) {
   if (method === "POST" && path === "/api/workflows/import") {
     const pkg = await readJson(request);
     if (pkg.format !== "otoflow.automation" || pkg.version !== 1 || !Array.isArray(pkg.steps)) return error("Gecersiz .otomasyon dosyasi.");
-    const workflow = { id: id("wf"), organizationId: ORG_ID, name: pkg.metadata.name, category: pkg.metadata.category || "genel", status: pkg.requiredCredential ? "draft" : "published", trigger: pkg.metadata.trigger, description: pkg.metadata.description, currentVersionId: id("wfv"), steps: pkg.steps.map((step) => ({ ...step, id: id("step"), credentialId: undefined })), createdAt: now() };
+    const workflow = { id: id("wf"), organizationId: ORG_ID, name: pkg.metadata.name, category: pkg.metadata.category || "genel", status: pkg.requiredCredential ? "draft" : "published", trigger: pkg.metadata.trigger, description: pkg.metadata.description, currentVersionId: id("wfv"), source: "import", schedule: pkg.metadata.schedule, steps: pkg.steps.map((step) => ({ ...step, id: id("step"), credentialId: undefined })), createdAt: now() };
     state.workflows.unshift(workflow);
     audit(state, "user", workflow.name + " .otomasyon dosyasindan ice aktarildi.", "workflow", workflow.id);
     return json(workflow, 201);
@@ -536,6 +597,7 @@ async function handleApi(request, url) {
     const body = await readJson(request);
     workflow.credentialId = body.credentialId || workflow.credentialId;
     if (Array.isArray(body.steps)) workflow.steps = body.steps;
+    if (body.schedule) workflow.schedule = body.schedule;
     if (body.publish) workflow.status = "published";
     return json(workflow);
   }
@@ -546,10 +608,11 @@ async function handleApi(request, url) {
     if (!workflow) return error("Workflow bulunamadi.", 404);
     if (workflow.status !== "published") return error("Yalnizca yayindaki otomasyonlar calistirilabilir.");
     const body = await readJson(request);
-    const requiresApproval = workflow.id === "wf_invoice" || workflow.id === "wf_customs" || workflow.category === "genel";
+    const configuredApprovalStep = (workflow.steps || []).findIndex((step) => step.requiresApproval || step.type === "approval.wait" || step.riskLevel === "critical");
+    const requiresApproval = workflow.id === "wf_invoice" || workflow.id === "wf_customs" || workflow.category === "genel" || configuredApprovalStep >= 0;
     const queueItemId = id("qitem");
     const totalSteps = Math.max(1, (workflow.steps || []).length);
-    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, currentStepIndex: requiresApproval ? 0 : totalSteps, totalSteps, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
+    const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, currentStepIndex: requiresApproval ? Math.max(0, configuredApprovalStep) : totalSteps, totalSteps, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
     state.jobs.unshift(job);
     if (requiresApproval) {
       state.approvals.unshift({ id: id("app"), organizationId: ORG_ID, jobId: job.id, title: workflow.name + " icin onay", summary: "Bu otomasyon riskli veya yasal/finansal etkili bir adim iceriyor.", riskLevel: workflow.id === "wf_customs" ? "critical" : "high", status: "pending", diff: [{ label: "Robot ciktisi", before: "Taslak", after: body.payloadSummary || "Demo calistirma" }, { label: "Final aksiyon", before: "Kapali", after: "Onay sonrasi calisacak" }], dueAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now() });

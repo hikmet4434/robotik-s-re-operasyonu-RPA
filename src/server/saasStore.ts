@@ -2,11 +2,14 @@ import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import { Cron } from "croner";
 import type {
   ApprovalTask,
   AgentStepLease,
   AuditActor,
   AuditEvent,
+  AiAutomationPlan,
+  AiSettings,
   AutomationDraft,
   AutomationPackage,
   AutomationOpportunity,
@@ -29,6 +32,7 @@ import type {
   SaasDashboard,
   User,
   Workflow,
+  WorkflowSchedule,
   WorkflowStep,
   WorkflowVersion
 } from "../shared/saasTypes";
@@ -58,6 +62,13 @@ interface SaasState {
   recordingSessions: RecordingSession[];
   recorderEvents: RecorderEvent[];
   automationDrafts: AutomationDraft[];
+  llmSettings?: {
+    provider: AiSettings["provider"];
+    model: string;
+    baseUrl: string;
+    encryptedApiKey?: string;
+    updatedAt: string;
+  };
 }
 
 const dataDir = path.resolve(process.cwd(), "data");
@@ -288,7 +299,13 @@ function seedState(): SaasState {
         ],
         createdAt
       }
-    ]
+    ],
+    llmSettings: {
+      provider: "template",
+      model: "yerel-guvenli-planlayici",
+      baseUrl: "",
+      updatedAt: createdAt
+    }
   };
 }
 
@@ -424,6 +441,10 @@ function normalizeState(state: SaasState): SaasState {
   ensure("recorderEvents", []);
   ensure("automationDrafts", []);
   ensure("credentials", []);
+  if (!state.llmSettings) {
+    state.llmSettings = { provider: "template", model: "yerel-guvenli-planlayici", baseUrl: "", updatedAt: now() };
+    changed = true;
+  }
   if (!state.workers.some((worker) => worker.id === LOCAL_WORKER_ID)) {
     state.workers.push({
       id: LOCAL_WORKER_ID,
@@ -677,6 +698,7 @@ export function publishAutomationDraft(draftId: string) {
     description: draft.objective,
     currentVersionId: versionId,
     credentialId: draft.credentialId,
+    source: "recorder",
     createdAt: ts
   };
   const version: WorkflowVersion = {
@@ -821,6 +843,97 @@ export function getWorkflows() {
     ...workflow,
     version: scoped.workflowVersions.find((version) => version.id === workflow.currentVersionId)
   }));
+}
+
+export function getAiSettings(): AiSettings {
+  const settings = readState().llmSettings!;
+  return {
+    provider: settings.provider,
+    model: settings.model,
+    baseUrl: settings.baseUrl,
+    hasApiKey: Boolean(settings.encryptedApiKey),
+    updatedAt: settings.updatedAt
+  };
+}
+
+export function getAiRuntimeSettings() {
+  const settings = readState().llmSettings!;
+  return {
+    ...getAiSettings(),
+    apiKey: settings.encryptedApiKey ? decryptSecret(settings.encryptedApiKey) : undefined
+  };
+}
+
+export function saveAiSettings(input: { provider: AiSettings["provider"]; model: string; baseUrl: string; apiKey?: string; clearApiKey?: boolean }) {
+  const state = readState();
+  const existing = state.llmSettings;
+  state.llmSettings = {
+    provider: input.provider,
+    model: input.model.trim(),
+    baseUrl: input.baseUrl.trim().replace(/\/$/, ""),
+    encryptedApiKey: input.clearApiKey ? undefined : input.apiKey ? encryptSecret(input.apiKey.trim()) : existing?.encryptedApiKey,
+    updatedAt: now()
+  };
+  audit(state, "user", `${input.provider} LLM bağlantı ayarı güncellendi; secret değeri şifreli kasada tutuluyor.`, "llm_settings", "primary");
+  writeState(state);
+  return getAiSettings();
+}
+
+function nextScheduleRun(schedule: WorkflowSchedule, from: Date = new Date()) {
+  if (!schedule.enabled) return undefined;
+  const cron = new Cron(schedule.cron, { timezone: schedule.timezone, paused: true });
+  return cron.nextRun(from)?.toISOString();
+}
+
+export function createWorkflowFromAiPlan(plan: AiAutomationPlan) {
+  const state = readState();
+  const ts = now();
+  const workflowId = id("wf");
+  const versionId = id("wfv");
+  const schedule = { ...plan.schedule, nextRunAt: nextScheduleRun(plan.schedule) };
+  const workflow: Workflow = {
+    id: workflowId,
+    organizationId: DEFAULT_ORG_ID,
+    name: plan.name,
+    category: plan.category,
+    status: "published",
+    trigger: plan.trigger,
+    description: plan.description,
+    currentVersionId: versionId,
+    source: plan.source,
+    schedule,
+    createdAt: ts
+  };
+  state.workflows.unshift(workflow);
+  state.workflowVersions.unshift({ id: versionId, workflowId, version: 1, steps: plan.steps, publishedAt: ts });
+  audit(state, "ai", `${workflow.name} doğal dil taslağından workflow olarak oluşturuldu.`, "workflow", workflow.id);
+  writeState(state);
+  return workflow;
+}
+
+export function runDueSchedules(reference = new Date()) {
+  const dueIds = readState().workflows
+    .filter((workflow) => workflow.status === "published" && workflow.schedule?.enabled && workflow.schedule.nextRunAt && new Date(workflow.schedule.nextRunAt).getTime() <= reference.getTime())
+    .map((workflow) => workflow.id);
+  const started: string[] = [];
+  for (const workflowId of dueIds) {
+    try {
+      runWorkflow(workflowId, "Zamanlanmış otomatik çalıştırma");
+      const state = readState();
+      const workflow = state.workflows.find((item) => item.id === workflowId);
+      if (workflow?.schedule) {
+        workflow.schedule.lastRunAt = reference.toISOString();
+        workflow.schedule.nextRunAt = nextScheduleRun(workflow.schedule, new Date(reference.getTime() + 1000));
+        writeState(state);
+        started.push(workflowId);
+      }
+    } catch (error) {
+      const state = readState();
+      audit(state, "system", `Zamanlanmış workflow başlatılamadı: ${sanitizeLog(error instanceof Error ? error.message : "Bilinmeyen hata")}`, "workflow", workflowId);
+      writeState(state);
+    }
+  }
+  return started;
 }
 
 export function createOpportunity(input: Pick<AutomationOpportunity, "title" | "department" | "monthlyVolume" | "minutesPerTask" | "errorRisk" | "feasibility">) {
@@ -1042,10 +1155,10 @@ export function leaseNextAgentStep(): AgentStepLease | null {
   const resolvedValue = resolveStepCredential(state, workflow, step);
   state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${job.currentStepIndex + 1}/${version.steps.length} adımı yerel ajan tarafından alındı: ${step.title}.` });
   writeState(state);
-  return { jobId: job.id, workflowName: workflow.name, stepIndex: job.currentStepIndex, totalSteps: version.steps.length, step, resolvedValue };
+  return { jobId: job.id, workflowName: workflow.name, stepIndex: job.currentStepIndex, totalSteps: version.steps.length, step, resolvedValue, outputs: job.outputs || {} };
 }
 
-export function completeAgentStep(input: { jobId: string; stepIndex: number; summary?: string }) {
+export function completeAgentStep(input: { jobId: string; stepIndex: number; summary?: string; output?: unknown }) {
   const state = readState();
   const job = findTenantRecord(state.jobs, input.jobId);
   if (job.status !== "running" || job.currentStepIndex !== input.stepIndex) throw new Error("Bu adım artık aktif değil veya başka bir ajan tarafından tamamlandı.");
@@ -1053,6 +1166,8 @@ export function completeAgentStep(input: { jobId: string; stepIndex: number; sum
   const version = state.workflowVersions.find((item) => item.id === workflow.currentVersionId);
   if (!version) throw new Error("Workflow sürümü bulunamadı.");
   const completedTitle = version.steps[input.stepIndex]?.title || `${input.stepIndex + 1}. adım`;
+  const outputKey = version.steps[input.stepIndex]?.parameters?.outputKey;
+  if (outputKey && input.output !== undefined) job.outputs = { ...(job.outputs || {}), [outputKey]: input.output };
   job.currentStepIndex += 1;
   job.retryCount = 0;
   job.leaseExpiresAt = undefined;
@@ -1445,7 +1560,7 @@ export function exportAutomationPackage(workflowId: string): AutomationPackage {
     format: "otoflow.automation",
     version: 1,
     exportedAt: now(),
-    metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger },
+    metadata: { name: workflow.name, description: workflow.description, category: workflow.category, trigger: workflow.trigger, source: workflow.source, schedule: workflow.schedule },
     steps: version.steps.map((step) => ({ ...step, credentialId: undefined })),
     variables: [],
     requiredCredential: credential ? { alias: "primary", label: credential.label, loginUrl: credential.loginUrl } : undefined
@@ -1466,6 +1581,8 @@ export function importAutomationPackage(pkg: AutomationPackage) {
     trigger: pkg.metadata.trigger,
     status: pkg.requiredCredential ? "draft" : "published",
     currentVersionId: versionId,
+    source: "import",
+    schedule: pkg.metadata.schedule ? { ...pkg.metadata.schedule, nextRunAt: nextScheduleRun(pkg.metadata.schedule) } : undefined,
     createdAt
   };
   const steps = pkg.steps.map((step) => ({ ...step, id: id("step"), credentialId: undefined }));
@@ -1476,7 +1593,7 @@ export function importAutomationPackage(pkg: AutomationPackage) {
   return workflow;
 }
 
-export function updateWorkflowConfiguration(workflowId: string, input: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean }) {
+export function updateWorkflowConfiguration(workflowId: string, input: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean; schedule?: WorkflowSchedule }) {
   const state = readState();
   const workflow = findTenantRecord(state.workflows, workflowId);
   if (input.credentialId) findTenantRecord(state.credentials, input.credentialId);
@@ -1484,6 +1601,7 @@ export function updateWorkflowConfiguration(workflowId: string, input: { steps?:
   if (!version) throw new Error("Workflow sürümü bulunamadı.");
   if (input.steps) version.steps = input.steps.map((step) => ({ ...step, credentialId: step.credentialId || input.credentialId }));
   if (input.credentialId) workflow.credentialId = input.credentialId;
+  if (input.schedule) workflow.schedule = { ...input.schedule, nextRunAt: nextScheduleRun(input.schedule) };
   if (input.publish) {
     workflow.status = "published";
     version.publishedAt = now();

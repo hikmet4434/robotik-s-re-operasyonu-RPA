@@ -17,11 +17,14 @@
     "start": "tsx src/server/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.62",
     "@prisma/client": "^6.19.3",
     "@vitejs/plugin-react": "^5.0.4",
+    "ai": "^6.0.230",
     "better-sqlite3": "^12.4.1",
     "concurrently": "^9.2.1",
     "cors": "^2.8.5",
+    "croner": "^9.1.0",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
     "multer": "^2.2.0",

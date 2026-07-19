@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { BrowserExecutor } from "./browserExecutor.js";
 import { DesktopExecutor } from "./desktopExecutor.js";
+import { FileExecutor } from "./fileExecutor.js";
 
 const apiBase = (process.env.OTOFLOW_API_BASE || "http://localhost:4100").replace(/\/$/, "");
 const sessionId = process.env.OTOFLOW_RECORDING_SESSION_ID || "";
@@ -13,6 +14,10 @@ const port = Number(process.env.OTOFLOW_LOCAL_AGENT_PORT || 4687);
 const allowedUiOrigins = new Set((process.env.OTOFLOW_UI_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173,https://otoflow-ai-rpa.hiktan.chatgpt.site").split(",").map((value) => value.trim()).filter(Boolean));
 const browser = new BrowserExecutor();
 const desktop = new DesktopExecutor();
+const files = new FileExecutor(async (fileItems, prompt) => {
+  const response = await apiRequest("/api/agent/ai-summarize", { method: "POST", body: JSON.stringify({ files: fileItems, prompt }) });
+  return response.summary;
+});
 let busy = false;
 let nativeRecorder;
 let activeRecordingSessionId = "";
@@ -51,9 +56,10 @@ async function sendEvent(recordingSessionId, event) {
 }
 
 async function executeLease(lease) {
-  const executor = lease.step.type.startsWith("browser.") ? browser : lease.step.type.startsWith("desktop.") ? desktop : null;
+  const executor = lease.step.type.startsWith("browser.") ? browser : lease.step.type.startsWith("desktop.") ? desktop : lease.step.type.startsWith("files.") || lease.step.type.startsWith("activity.") || lease.step.type.startsWith("report.") ? files : null;
   if (!executor) throw new Error(`${lease.step.type} için yerel yürütücü henüz tanımlı değil.`);
-  return executor.execute(lease.step, lease.resolvedValue);
+  if (executor === files) return executor.execute(lease.step, lease.outputs || {});
+  return { summary: await executor.execute(lease.step, lease.resolvedValue) };
 }
 
 async function poll() {
@@ -63,8 +69,8 @@ async function poll() {
     const lease = await apiRequest("/api/agent/next-step", { method: "POST", body: "{}" });
     if (!lease) return;
     try {
-      const summary = await executeLease(lease);
-      await apiRequest(`/api/agent/jobs/${lease.jobId}/steps/${lease.stepIndex}/complete`, { method: "POST", body: JSON.stringify({ summary }) });
+      const result = await executeLease(lease);
+      await apiRequest(`/api/agent/jobs/${lease.jobId}/steps/${lease.stepIndex}/complete`, { method: "POST", body: JSON.stringify(result) });
     } catch (error) {
       await apiRequest(`/api/agent/jobs/${lease.jobId}/steps/${lease.stepIndex}/fail`, { method: "POST", body: JSON.stringify({ error: error instanceof Error ? error.message : "Bilinmeyen ajan hatası" }) });
     }

@@ -42,11 +42,13 @@ import type {
 } from "../../shared/saasTypes";
 import { api } from "../api";
 import { formatDate, formatNumber } from "../utils";
+import { AiAutomationBuilder } from "./AiAutomationBuilder";
 
-type Tab = "dashboard" | "recorder" | "workflows" | "jobs" | "approvals" | "documents" | "opportunities" | "connectors" | "compliance";
+type Tab = "dashboard" | "ai-builder" | "recorder" | "workflows" | "jobs" | "approvals" | "documents" | "opportunities" | "connectors" | "compliance";
 
 const tabLabels: Record<Tab, string> = {
   dashboard: "Genel Bakış",
+  "ai-builder": "AI ile Hazırla",
   recorder: "Recorder Studio",
   workflows: "Otomasyonlar",
   jobs: "Robot İşleri",
@@ -74,6 +76,7 @@ export function DashboardPage() {
   useEffect(() => {
     const byPath: Record<string, Tab> = {
       "/dashboard": "dashboard",
+      "/ai-builder": "ai-builder",
       "/recorder": "recorder",
       "/workflows": "workflows",
       "/jobs": "jobs",
@@ -129,6 +132,7 @@ export function DashboardPage() {
       {message ? <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">{message}</div> : null}
 
       {activeTab === "dashboard" ? <Overview data={data} setTab={setActiveTab} /> : null}
+      {activeTab === "ai-builder" ? <AiAutomationBuilder refreshDashboard={refresh} /> : null}
       {activeTab === "recorder" ? <RecorderStudio data={data} refreshDashboard={refresh} /> : null}
       {activeTab === "workflows" ? <Workflows data={data} onRun={runWorkflow} refresh={refresh} setMessage={setMessage} /> : null}
       {activeTab === "jobs" ? <Jobs data={data} refresh={refresh} /> : null}

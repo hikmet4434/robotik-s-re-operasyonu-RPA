@@ -7,6 +7,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type ConnectorStatus = "connected" | "needs_attention" | "disabled";
 export type AuditActor = "system" | "robot" | "user" | "ai";
+export type AiProvider = "template" | "openrouter" | "openai" | "ollama" | "custom";
+export type WorkflowSource = "template" | "recorder" | "ai" | "import";
 
 export type WorkflowStepType =
   | "browser.navigate"
@@ -27,7 +29,29 @@ export type WorkflowStepType =
   | "email.send_after_approval"
   | "table.append"
   | "condition"
-  | "webhook.emit";
+  | "webhook.emit"
+  | "files.scan"
+  | "files.summarize"
+  | "activity.summarize"
+  | "report.compose"
+  | "report.save";
+
+export interface WorkflowSchedule {
+  enabled: boolean;
+  cron: string;
+  timezone: string;
+  label: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+}
+
+export interface AiSettings {
+  provider: AiProvider;
+  model: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  updatedAt?: string;
+}
 
 export type RecorderEventType =
   | "screen.start"
@@ -174,6 +198,14 @@ export interface WorkflowStep {
     timeoutMs?: number;
     credentialField?: "username" | "password";
     outputKey?: string;
+    directoryPath?: string;
+    reportPath?: string;
+    lookbackDays?: number;
+    extensions?: string[];
+    recursive?: boolean;
+    maxFiles?: number;
+    prompt?: string;
+    reportTitle?: string;
   };
 }
 
@@ -195,6 +227,8 @@ export interface Workflow {
   description: string;
   currentVersionId: string;
   credentialId?: string;
+  source?: WorkflowSource;
+  schedule?: WorkflowSchedule;
   createdAt: string;
 }
 
@@ -240,6 +274,7 @@ export interface Job {
   leaseExpiresAt?: string;
   startedAt?: string;
   completedAt?: string;
+  outputs?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -334,6 +369,8 @@ export interface AutomationPackage {
     description: string;
     category: Workflow["category"];
     trigger: string;
+    source?: WorkflowSource;
+    schedule?: WorkflowSchedule;
   };
   steps: WorkflowStep[];
   variables: AutomationDraft["variables"];
@@ -351,6 +388,19 @@ export interface AgentStepLease {
   totalSteps: number;
   step: WorkflowStep;
   resolvedValue?: string;
+  outputs: Record<string, unknown>;
+}
+
+export interface AiAutomationPlan {
+  name: string;
+  description: string;
+  category: Workflow["category"];
+  trigger: string;
+  source: "ai" | "template";
+  schedule: WorkflowSchedule;
+  steps: WorkflowStep[];
+  assumptions: string[];
+  providerLabel: string;
 }
 
 export interface CompliancePolicy {

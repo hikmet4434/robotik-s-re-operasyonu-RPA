@@ -1,10 +1,11 @@
-import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, ShieldCheck, Workflow } from "lucide-react";
+import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
 const links = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/ai-builder", label: "AI ile Hazırla", icon: Sparkles },
   { to: "/recorder", label: "Recorder Studio", icon: Radio },
   { to: "/workflows", label: "Otomasyonlar", icon: Workflow },
   { to: "/jobs", label: "Robot İşleri", icon: Bot },

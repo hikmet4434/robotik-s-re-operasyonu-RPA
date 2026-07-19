@@ -9,6 +9,7 @@ import type { Actor } from "../shared/types";
 import { calculateTax } from "./tax";
 import { createUploadedFile } from "./seed";
 import { dashboardStats, getFile, listFiles, nextFileNumber, saveFile } from "./db";
+import { generateAutomationPlan, summarizeFilesWithLlm } from "./aiAutomation";
 import {
   cancelJob,
   analyzeRecording,
@@ -16,6 +17,7 @@ import {
   attachRecordingVideo,
   completeAgentStep,
   createConnector,
+  createWorkflowFromAiPlan,
   createOpportunity,
   createPolicy,
   createRecordingSession,
@@ -26,6 +28,8 @@ import {
   failAgentStep,
   getCurrentContext,
   getDashboard,
+  getAiRuntimeSettings,
+  getAiSettings,
   getWorkflows,
   heartbeatLocalAgent,
   importAutomationPackage,
@@ -38,7 +42,9 @@ import {
   publishAutomationDraft,
   publishWorkflow,
   resolveApproval,
+  runDueSchedules,
   runWorkflow,
+  saveAiSettings,
   updateAutomationDraft,
   updateWorkflowConfiguration,
   updateDocumentField
@@ -109,6 +115,7 @@ const workflowStepSchema = z.object({
     "desktop.launch", "desktop.click", "desktop.type", "desktop.hotkey", "desktop.wait",
     "http.request", "document.extract", "approval.wait", "email.draft", "email.send_after_approval",
     "table.append", "condition", "webhook.emit"
+    , "files.scan", "files.summarize", "activity.summarize", "report.compose", "report.save"
   ]),
   title: z.string().min(2).max(160),
   description: z.string().min(2).max(800),
@@ -128,7 +135,24 @@ const workflowStepSchema = z.object({
     timeoutMs: z.number().int().min(0).max(120000).optional(),
     credentialField: z.enum(["username", "password"]).optional(),
     outputKey: z.string().max(160).optional()
+    , directoryPath: z.string().max(2048).optional()
+    , reportPath: z.string().max(2048).optional()
+    , lookbackDays: z.number().int().min(1).max(365).optional()
+    , extensions: z.array(z.string().max(20)).max(50).optional()
+    , recursive: z.boolean().optional()
+    , maxFiles: z.number().int().min(1).max(5000).optional()
+    , prompt: z.string().max(4000).optional()
+    , reportTitle: z.string().max(240).optional()
   }).optional()
+});
+
+const workflowScheduleSchema = z.object({
+  enabled: z.boolean(),
+  cron: z.string().min(5).max(120),
+  timezone: z.string().min(3).max(80),
+  label: z.string().min(2).max(160),
+  nextRunAt: z.string().optional(),
+  lastRunAt: z.string().optional()
 });
 
 function requireLocalAgent(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -352,6 +376,88 @@ app.post("/api/workflows", (_req, res) => {
   res.status(501).json({ error: "Yeni workflow builder UI ikinci iterasyonda açılacak; hazır şablonlar bu sürümde kullanılabilir." });
 });
 
+app.get("/api/ai/settings", (_req, res) => {
+  res.json(getAiSettings());
+});
+
+app.put("/api/ai/settings", (req, res) => {
+  const schema = z.object({
+    provider: z.enum(["template", "openrouter", "openai", "ollama", "custom"]),
+    model: z.string().min(2).max(160),
+    baseUrl: z.string().max(500),
+    apiKey: z.string().max(500).optional(),
+    clearApiKey: z.boolean().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const fixedUrls = {
+    template: "",
+    openrouter: "https://openrouter.ai/api/v1",
+    openai: "https://api.openai.com/v1",
+    ollama: "http://127.0.0.1:11434/v1"
+  } as const;
+  const baseUrl = parsed.data.provider === "custom" ? parsed.data.baseUrl : fixedUrls[parsed.data.provider];
+  if (parsed.data.provider === "custom") {
+    try {
+      const url = new URL(baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    } catch {
+      res.status(400).json({ error: "Özel sağlayıcı için geçerli bir HTTP/HTTPS API adresi girin." });
+      return;
+    }
+  }
+  res.json(saveAiSettings({ ...parsed.data, baseUrl }));
+});
+
+app.post("/api/ai/automation-plan", async (req, res) => {
+  const schema = z.object({
+    prompt: z.string().min(12).max(8000),
+    directoryPath: z.string().max(2048).optional(),
+    reportPath: z.string().max(2048).optional(),
+    cron: z.string().min(5).max(120).optional(),
+    timezone: z.string().min(3).max(80).optional(),
+    scheduleLabel: z.string().max(160).optional(),
+    approvalAtEnd: z.boolean().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(await generateAutomationPlan(parsed.data, getAiRuntimeSettings()));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "AI otomasyon planı üretilemedi." });
+  }
+});
+
+app.post("/api/ai/workflows", (req, res) => {
+  const schema = z.object({
+    name: z.string().min(3).max(160),
+    description: z.string().min(8).max(1200),
+    category: z.enum(["finans", "operasyon", "gümrük", "satış", "genel"]),
+    trigger: z.string().min(2).max(300),
+    source: z.enum(["ai", "template"]),
+    schedule: workflowScheduleSchema,
+    steps: z.array(workflowStepSchema).min(1).max(250),
+    assumptions: z.array(z.string().max(300)).max(20),
+    providerLabel: z.string().max(200)
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.status(201).json(createWorkflowFromAiPlan(parsed.data));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "AI workflow kaydedilemedi." });
+  }
+});
+
 app.get("/api/workflows/:id/export", (req, res) => {
   try {
     const pkg = exportAutomationPackage(req.params.id);
@@ -373,7 +479,9 @@ app.post("/api/workflows/import", (req, res) => {
       name: z.string().min(3).max(160),
       description: z.string().min(3).max(1200),
       category: z.enum(["finans", "operasyon", "gümrük", "satış", "genel"]),
-      trigger: z.string().min(2).max(300)
+      trigger: z.string().min(2).max(300),
+      source: z.enum(["template", "recorder", "ai", "import"]).optional(),
+      schedule: workflowScheduleSchema.optional()
     }),
     steps: z.array(workflowStepSchema).min(1).max(250),
     variables: z.array(z.object({ key: z.string(), label: z.string(), example: z.string(), source: z.string() })).max(100),
@@ -388,7 +496,7 @@ app.post("/api/workflows/import", (req, res) => {
 });
 
 app.patch("/api/workflows/:id", (req, res) => {
-  const schema = z.object({ steps: z.array(workflowStepSchema).min(1).max(250).optional(), credentialId: z.string().optional(), publish: z.boolean().optional() });
+  const schema = z.object({ steps: z.array(workflowStepSchema).min(1).max(250).optional(), credentialId: z.string().optional(), publish: z.boolean().optional(), schedule: workflowScheduleSchema.optional() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -468,16 +576,37 @@ app.post("/api/agent/next-step", requireLocalAgent, (_req, res) => {
 });
 
 app.post("/api/agent/jobs/:id/steps/:stepIndex/complete", requireLocalAgent, (req, res) => {
-  const schema = z.object({ summary: z.string().max(500).optional() });
+  const schema = z.object({ summary: z.string().max(500).optional(), output: z.unknown().optional() });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    res.json(completeAgentStep({ jobId: String(req.params.id), stepIndex: Number(req.params.stepIndex), summary: parsed.data.summary }));
+    res.json(completeAgentStep({ jobId: String(req.params.id), stepIndex: Number(req.params.stepIndex), summary: parsed.data.summary, output: parsed.data.output }));
   } catch (error) {
     res.status(409).json({ error: error instanceof Error ? error.message : "Adım tamamlanamadı." });
+  }
+});
+
+app.post("/api/agent/ai-summarize", requireLocalAgent, async (req, res) => {
+  const fileSchema = z.object({
+    name: z.string().max(260),
+    relativePath: z.string().max(2048),
+    size: z.number().nonnegative(),
+    modifiedAt: z.string().max(80),
+    excerpt: z.string().max(3000).optional()
+  });
+  const schema = z.object({ files: z.array(fileSchema).max(100), prompt: z.string().max(4000).optional() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json({ summary: await summarizeFilesWithLlm(parsed.data.files, parsed.data.prompt, getAiRuntimeSettings()) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Dosyalar özetlenemedi." });
   }
 });
 
@@ -842,3 +971,6 @@ if (fs.existsSync(distDir)) {
 app.listen(port, () => {
   console.log(`OtoFlow AI API listening on http://localhost:${port}`);
 });
+
+setTimeout(() => runDueSchedules(), 2_000).unref();
+setInterval(() => runDueSchedules(), 30_000).unref();

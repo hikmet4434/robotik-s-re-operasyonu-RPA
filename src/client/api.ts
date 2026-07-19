@@ -1,6 +1,8 @@
 import type { Actor, CustomsFile, DashboardPayload } from "../shared/types";
 import type {
   ApprovalTask,
+  AiAutomationPlan,
+  AiSettings,
   AutomationDraft,
   AutomationPackage,
   AutomationOpportunity,
@@ -52,7 +54,7 @@ export const api = {
   updateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
     request<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   publishAutomationDraft: (id: string) => request<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),
-  configureWorkflow: (id: string, body: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean }) =>
+  configureWorkflow: (id: string, body: { steps?: WorkflowStep[]; credentialId?: string; publish?: boolean; schedule?: Workflow["schedule"] }) =>
     request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   importAutomation: (body: AutomationPackage) => request<Workflow>("/api/workflows/import", { method: "POST", body: JSON.stringify(body) }),
   exportAutomation: async (id: string) => {
@@ -63,6 +65,12 @@ export const api = {
   runWorkflow: (id: string, payloadSummary: string) =>
     request<Job>(`/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ payloadSummary }) }),
   publishWorkflow: (id: string) => request<Workflow>(`/api/workflows/${id}/publish`, { method: "POST", body: "{}" }),
+  aiSettings: () => request<AiSettings>("/api/ai/settings"),
+  saveAiSettings: (body: { provider: AiSettings["provider"]; model: string; baseUrl: string; apiKey?: string; clearApiKey?: boolean }) =>
+    request<AiSettings>("/api/ai/settings", { method: "PUT", body: JSON.stringify(body) }),
+  generateAiAutomation: (body: { prompt: string; directoryPath?: string; reportPath?: string; cron?: string; timezone?: string; scheduleLabel?: string; approvalAtEnd?: boolean }) =>
+    request<AiAutomationPlan>("/api/ai/automation-plan", { method: "POST", body: JSON.stringify(body) }),
+  createAiWorkflow: (body: AiAutomationPlan) => request<Workflow>("/api/ai/workflows", { method: "POST", body: JSON.stringify(body) }),
   jobs: () => request<Array<Job & { logs: unknown[]; workflow?: Workflow }>>("/api/jobs"),
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }),
   approvals: () => request<ApprovalTask[]>("/api/approvals"),

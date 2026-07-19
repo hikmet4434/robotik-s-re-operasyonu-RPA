@@ -17,6 +17,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: "dashboard", element: <DashboardPage /> },
+      { path: "ai-builder", element: <DashboardPage /> },
       { path: "recorder", element: <DashboardPage /> },
       { path: "workflows", element: <DashboardPage /> },
       { path: "jobs", element: <DashboardPage /> },
