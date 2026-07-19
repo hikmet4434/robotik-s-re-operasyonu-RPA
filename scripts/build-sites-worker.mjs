@@ -4,6 +4,7 @@ import { extname, join, posix, relative } from "node:path";
 const root = process.cwd();
 const distDir = join(root, "dist");
 const serverDir = join(distDir, "server");
+const hostingDir = join(distDir, ".openai");
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -34,6 +35,9 @@ async function listFiles(dir) {
 function publicPath(filePath) {
   return `/${relative(distDir, filePath).split(posix.sep).join("/")}`;
 }
+
+await mkdir(hostingDir, { recursive: true });
+await writeFile(join(hostingDir, "hosting.json"), await readFile(join(root, ".openai", "hosting.json")));
 
 const files = await listFiles(distDir);
 const assets = [];
