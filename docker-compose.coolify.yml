@@ -9,6 +9,11 @@ services:
       SAAS_DATABASE_PATH: /app/data/otoflow-saas.sqlite
       DATABASE_PATH: /app/data/otoflow.sqlite
       CREDENTIAL_VAULT_KEY: ${SERVICE_HEX_64_CREDENTIAL_VAULT_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL_PRIMARY: ${OPENROUTER_MODEL_PRIMARY:-z-ai/glm-5.2}
+      OPENROUTER_MODEL_FALLBACK_1: ${OPENROUTER_MODEL_FALLBACK_1:-moonshotai/kimi-k3}
+      OPENROUTER_MODEL_FALLBACK_2: ${OPENROUTER_MODEL_FALLBACK_2:-deepseek/deepseek-v4-pro}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
     volumes:
       - otoflow_data:/app/data
     expose:

@@ -540,6 +540,10 @@ async function handleApi(request, url) {
     return json({ provider: "template", model: "yerel-guvenli-planlayici", baseUrl: "", hasApiKey: false, updatedAt: now() });
   }
 
+  if (method === "GET" && path === "/api/ai/status") {
+    return json({ mode: "local_template", configured: true, modelCount: 1 });
+  }
+
   if (method === "PUT" && path === "/api/ai/settings") {
     const body = await readJson(request);
     if (body.provider !== "template") return error("Bulut onizlemesinde API anahtari saklanmaz. OpenAI, OpenRouter ve Ollama icin yerel uygulamayi kullanin.");

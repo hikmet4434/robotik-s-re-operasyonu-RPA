@@ -92,3 +92,9 @@ Docker Compose deploy için:
 ```text
 docker-compose.coolify.yml
 ```
+
+Coolify Environment Variables alanında `OPENROUTER_API_KEY` secret olarak tanımlanır. Model seçimi son kullanıcı ekranında gösterilmez; sunucu şu sırayla otomatik fallback uygular:
+
+1. `OPENROUTER_MODEL_PRIMARY=z-ai/glm-5.2`
+2. `OPENROUTER_MODEL_FALLBACK_1=moonshotai/kimi-k3`
+3. `OPENROUTER_MODEL_FALLBACK_2=deepseek/deepseek-v4-pro`

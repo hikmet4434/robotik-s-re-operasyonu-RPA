@@ -18,6 +18,7 @@ export interface AiPlanRequest {
 
 export interface AiRuntimeSettings extends AiSettings {
   apiKey?: string;
+  models?: string[];
 }
 
 const allowedStepTypes = [
@@ -157,20 +158,23 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
     apiKey: settings.apiKey || "ollama-local",
     supportsStructuredOutputs: settings.provider !== "ollama"
   });
-  const result = await generateText({
-    model: provider(settings.model),
-    output: Output.json(),
-    system: [
-      "Sen OtoFlow için güvenli bir RPA workflow mimarısın.",
-      "Yalnızca verilen izinli adım türlerini kullan. Uydurma şifre, kullanıcı adı veya gizli bilgi üretme.",
-      "Bilinmeyen selector, koordinat, URL ve dosya yolu için boş değer veya açık varsayım kullan.",
-      "Para, silme, resmi beyan, müşteri iletişimi ve dış sisteme gönderim adımlarında requiresApproval=true kullan.",
-      "parameterJson alanına yalnızca geçerli JSON nesnesi yaz. Dosya raporu için files.scan, files.summarize, activity.summarize, report.compose ve report.save adımlarını sırala.",
-      "Başlıkları ve açıklamaları Türkçe yaz. Ekran kaydı gerektirmeyen çalıştırılabilir bir taslak üret."
-    ].join("\n"),
-    prompt: `Kullanıcı talebi:\n${input.prompt}\n\nTakvim: ${input.scheduleLabel || "Manuel"}\nKlasör: ${input.directoryPath || "Kullanıcı seçecek"}\nRapor hedefi: ${input.reportPath || "Kullanıcı seçecek"}`
+  const generated = await runWithModelFallback(settings.models || [settings.model], async (model) => {
+    const result = await generateText({
+      model: provider(model),
+      output: Output.json(),
+      system: [
+        "Sen OtoFlow için güvenli bir RPA workflow mimarısın.",
+        "Yalnızca verilen izinli adım türlerini kullan. Uydurma şifre, kullanıcı adı veya gizli bilgi üretme.",
+        "Bilinmeyen selector, koordinat, URL ve dosya yolu için boş değer veya açık varsayım kullan.",
+        "Para, silme, resmi beyan, müşteri iletişimi ve dış sisteme gönderim adımlarında requiresApproval=true kullan.",
+        "parameterJson alanına yalnızca geçerli JSON nesnesi yaz. Dosya raporu için files.scan, files.summarize, activity.summarize, report.compose ve report.save adımlarını sırala.",
+        "Başlıkları ve açıklamaları Türkçe yaz. Ekran kaydı gerektirmeyen çalıştırılabilir bir taslak üret."
+      ].join("\n"),
+      prompt: `Kullanıcı talebi:\n${input.prompt}\n\nTakvim: ${input.scheduleLabel || "Manuel"}\nKlasör: ${input.directoryPath || "Kullanıcı seçecek"}\nRapor hedefi: ${input.reportPath || "Kullanıcı seçecek"}`
+    });
+    return generatedPlanSchema.parse(result.output);
   });
-  const output = generatedPlanSchema.parse(result.output);
+  const output = generated.value;
 
   const plan: AiAutomationPlan = {
     name: output.name,
@@ -180,7 +184,7 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
     source: "ai",
     schedule: { enabled: false, cron: input.cron || "0 9 * * 1", timezone: input.timezone || "Europe/Istanbul", label: input.scheduleLabel || "Manuel" },
     assumptions: output.assumptions,
-    providerLabel: `${settings.provider} · ${settings.model}`,
+    providerLabel: `OpenRouter · ${generated.model}`,
     steps: output.steps.map((step) => ({
       id: stepId(),
       type: step.type,
@@ -212,10 +216,30 @@ export async function summarizeFilesWithLlm(
   if (settings.provider !== "ollama" && !settings.apiKey) return buildHeuristicSummary(files);
   const provider = createOpenAICompatible({ name: "otoflowSummary", baseURL: settings.baseUrl, apiKey: settings.apiKey || "ollama-local" });
   const source = files.slice(0, 80).map((file) => ({ ...file, excerpt: file.excerpt?.slice(0, 1800) }));
-  const { text } = await generateText({
-    model: provider(settings.model),
-    system: "Dosya içeriklerinden kısa, somut ve Türkçe haftalık çalışma özeti üret. Gizli bilgi tahmin etme. Her dosyayı ayrı madde yap.",
-    prompt: `${prompt || "Yeni ve değişen dosyaları özetle."}\n\n${JSON.stringify(source)}`
+  const generated = await runWithModelFallback(settings.models || [settings.model], async (model) => {
+    const { text } = await generateText({
+      model: provider(model),
+      system: "Dosya içeriklerinden kısa, somut ve Türkçe haftalık çalışma özeti üret. Gizli bilgi tahmin etme. Her dosyayı ayrı madde yap.",
+      prompt: `${prompt || "Yeni ve değişen dosyaları özetle."}\n\n${JSON.stringify(source)}`
+    });
+    if (!text.trim()) throw new Error("Model boş yanıt verdi.");
+    return text.trim();
   });
-  return text.trim();
+  return generated.value;
+}
+
+export async function runWithModelFallback<T>(models: string[], operation: (model: string) => Promise<T>) {
+  const candidates = [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+  if (candidates.length === 0) throw new Error("OpenRouter model zinciri yapılandırılmamış.");
+  const failures: string[] = [];
+  for (const model of candidates) {
+    try {
+      return { value: await operation(model), model };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Bilinmeyen model hatası";
+      const safeMessage = /(api[_ -]?key|authorization|token|secret)/i.test(message) ? "Kimlik doğrulama hatası." : message.slice(0, 180);
+      failures.push(`${model}: ${safeMessage}`);
+    }
+  }
+  throw new Error(`OpenRouter model zincirindeki tüm modeller başarısız oldu. ${failures.join(" | ")}`);
 }

@@ -380,7 +380,20 @@ app.get("/api/ai/settings", (_req, res) => {
   res.json(getAiSettings());
 });
 
+app.get("/api/ai/status", (_req, res) => {
+  const settings = getAiRuntimeSettings();
+  res.json({
+    mode: settings.provider === "openrouter" && settings.models?.length === 3 ? "openrouter_fallback" : "local_template",
+    configured: settings.provider === "template" || Boolean(settings.apiKey),
+    modelCount: settings.models?.length || 1
+  });
+});
+
 app.put("/api/ai/settings", (req, res) => {
+  if (process.env.OPENROUTER_API_KEY) {
+    res.status(403).json({ error: "LLM ayarları Coolify ortam değişkenleri tarafından yönetiliyor." });
+    return;
+  }
   const schema = z.object({
     provider: z.enum(["template", "openrouter", "openai", "ollama", "custom"]),
     model: z.string().min(2).max(160),

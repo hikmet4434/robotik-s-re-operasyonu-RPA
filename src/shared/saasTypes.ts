@@ -53,6 +53,12 @@ export interface AiSettings {
   updatedAt?: string;
 }
 
+export interface AiRuntimeStatus {
+  mode: "openrouter_fallback" | "local_template";
+  configured: boolean;
+  modelCount: number;
+}
+
 export type RecorderEventType =
   | "screen.start"
   | "screen.stop"

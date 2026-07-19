@@ -2,6 +2,7 @@ import type { Actor, CustomsFile, DashboardPayload } from "../shared/types";
 import type {
   ApprovalTask,
   AiAutomationPlan,
+  AiRuntimeStatus,
   AiSettings,
   AutomationDraft,
   AutomationPackage,
@@ -66,6 +67,7 @@ export const api = {
     request<Job>(`/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ payloadSummary }) }),
   publishWorkflow: (id: string) => request<Workflow>(`/api/workflows/${id}/publish`, { method: "POST", body: "{}" }),
   aiSettings: () => request<AiSettings>("/api/ai/settings"),
+  aiStatus: () => request<AiRuntimeStatus>("/api/ai/status"),
   saveAiSettings: (body: { provider: AiSettings["provider"]; model: string; baseUrl: string; apiKey?: string; clearApiKey?: boolean }) =>
     request<AiSettings>("/api/ai/settings", { method: "PUT", body: JSON.stringify(body) }),
   generateAiAutomation: (body: { prompt: string; directoryPath?: string; reportPath?: string; cron?: string; timezone?: string; scheduleLabel?: string; approvalAtEnd?: boolean }) =>

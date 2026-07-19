@@ -1,29 +1,12 @@
-import { CalendarDays, CheckCircle2, FolderOpen, KeyRound, Play, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { CalendarDays, CheckCircle2, FolderOpen, Play, Save, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AiAutomationPlan, AiProvider, AiSettings, Workflow } from "../../shared/saasTypes";
+import type { AiAutomationPlan, AiRuntimeStatus, Workflow } from "../../shared/saasTypes";
 import { api } from "../api";
-
-const providerNames: Record<AiProvider, string> = {
-  template: "Yerel planlayıcı",
-  openrouter: "OpenRouter",
-  openai: "OpenAI",
-  ollama: "Ollama (bilgisayarımda)",
-  custom: "Özel OpenAI uyumlu"
-};
-
-const providerDefaults: Record<AiProvider, { model: string; baseUrl: string; models: string[] }> = {
-  template: { model: "yerel-guvenli-planlayici", baseUrl: "", models: ["yerel-guvenli-planlayici"] },
-  openrouter: { model: "openai/gpt-5.4", baseUrl: "https://openrouter.ai/api/v1", models: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro-preview"] },
-  openai: { model: "gpt-5.4", baseUrl: "https://api.openai.com/v1", models: ["gpt-5.4", "gpt-5-mini"] },
-  ollama: { model: "qwen3", baseUrl: "http://127.0.0.1:11434/v1", models: ["qwen3", "llama3.2"] },
-  custom: { model: "model-id", baseUrl: "http://127.0.0.1:1234/v1", models: ["model-id"] }
-};
 
 const dayNames = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
 
 export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: () => Promise<void> }) {
-  const [settings, setSettings] = useState<AiSettings>({ provider: "template", model: "yerel-guvenli-planlayici", baseUrl: "", hasApiKey: false });
-  const [apiKey, setApiKey] = useState("");
+  const [aiStatus, setAiStatus] = useState<AiRuntimeStatus | null>(null);
   const [prompt, setPrompt] = useState("Bütün dosyalarımı haftada bir incele. Son bir haftada yeni gelen ve değişen dosyaları özetle, günlere göre neler yaptığımı raporla. Her pazartesi saat 09:00'da raporu hazırla.");
   const [directoryPath, setDirectoryPath] = useState("/Users/ht44/Documents");
   const [reportPath, setReportPath] = useState("/Users/ht44/Documents/OtoFlow Raporları/haftalik-dosya-raporu.md");
@@ -36,7 +19,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    api.aiSettings().then(setSettings).catch(() => undefined);
+    api.aiStatus().then(setAiStatus).catch(() => undefined);
   }, []);
 
   const schedule = useMemo(() => {
@@ -46,23 +29,10 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
     return { cron: `${minute} ${hour} * * ${dayOfWeek}`, label: `Her ${dayNames[dayOfWeek].toLocaleLowerCase("tr-TR")} ${time}` };
   }, [dayOfWeek, frequency, time]);
 
-  function changeProvider(provider: AiProvider) {
-    const next = providerDefaults[provider];
-    setSettings((current) => ({ ...current, provider, model: next.model, baseUrl: next.baseUrl, hasApiKey: provider === current.provider ? current.hasApiKey : false }));
-    setApiKey("");
-  }
-
   async function generatePlan() {
     setBusy(true);
     setMessage(null);
     try {
-      const saved = await api.saveAiSettings({
-        provider: settings.provider,
-        model: settings.model,
-        baseUrl: settings.baseUrl,
-        apiKey: apiKey || undefined
-      });
-      setSettings(saved);
       const generated = await api.generateAiAutomation({
         prompt,
         directoryPath,
@@ -118,36 +88,13 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
             <h2 className="text-xl font-bold">Doğal dilden çalıştırılabilir workflow</h2>
           </div>
           <div className="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
-            <ShieldCheck size={16} /> Onay ve kasa politikaları aktif
+            <ShieldCheck size={16} /> {aiStatus?.mode === "openrouter_fallback" ? `${aiStatus.modelCount} modelli otomatik fallback aktif` : "Yerel planlayıcı aktif"}
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
-          <div className="space-y-4">
-            <label className="block text-sm font-semibold">LLM sağlayıcısı
-              <select className="input mt-2" value={settings.provider} onChange={(event) => changeProvider(event.target.value as AiProvider)}>
-                {(Object.keys(providerNames) as AiProvider[]).map((provider) => <option key={provider} value={provider}>{providerNames[provider]}</option>)}
-              </select>
-            </label>
-            <label className="block text-sm font-semibold">Model
-              <input className="input mt-2" list="ai-models" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} />
-              <datalist id="ai-models">{providerDefaults[settings.provider].models.map((model) => <option key={model} value={model} />)}</datalist>
-            </label>
-            {settings.provider === "custom" ? <label className="block text-sm font-semibold">API adresi
-              <input className="input mt-2" value={settings.baseUrl} onChange={(event) => setSettings({ ...settings, baseUrl: event.target.value })} />
-            </label> : null}
-            {!['template', 'ollama'].includes(settings.provider) ? <label className="block text-sm font-semibold">API anahtarı
-              <div className="relative mt-2">
-                <KeyRound className="absolute left-3 top-3 text-muted" size={16} />
-                <input className="input pl-10" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.hasApiKey ? "Kayıtlı anahtarı kullan" : "API anahtarını gir"} autoComplete="new-password" />
-              </div>
-            </label> : null}
-          </div>
-
-          <label className="block text-sm font-semibold">Yapılacak işi tarif et
-            <textarea className="input mt-2 min-h-56 resize-y leading-6" value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-          </label>
-        </div>
+        <label className="mt-5 block text-sm font-semibold">Yapılacak işi tarif et
+          <textarea className="input mt-2 min-h-56 resize-y leading-6" value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        </label>
       </section>
 
       <section className="panel p-5">

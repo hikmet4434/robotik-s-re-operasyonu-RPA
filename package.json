@@ -11,6 +11,7 @@
     "dev:agent": "npm --prefix agents/local-agent start",
     "setup:agent": "npm --prefix agents/local-agent install",
     "build": "tsc --noEmit && vite build && node scripts/build-sites-worker.mjs",
+    "test:llm-fallback": "tsx tests/llm-fallback.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "preview": "vite preview --host 0.0.0.0",

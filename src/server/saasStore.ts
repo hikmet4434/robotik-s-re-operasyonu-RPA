@@ -857,9 +857,27 @@ export function getAiSettings(): AiSettings {
 }
 
 export function getAiRuntimeSettings() {
+  const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (openRouterApiKey) {
+    const models = [
+      process.env.OPENROUTER_MODEL_PRIMARY || "z-ai/glm-5.2",
+      process.env.OPENROUTER_MODEL_FALLBACK_1 || "moonshotai/kimi-k3",
+      process.env.OPENROUTER_MODEL_FALLBACK_2 || "deepseek/deepseek-v4-pro"
+    ];
+    return {
+      provider: "openrouter" as const,
+      model: models[0],
+      models,
+      baseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
+      hasApiKey: true,
+      updatedAt: now(),
+      apiKey: openRouterApiKey
+    };
+  }
   const settings = readState().llmSettings!;
   return {
     ...getAiSettings(),
+    models: [settings.model],
     apiKey: settings.encryptedApiKey ? decryptSecret(settings.encryptedApiKey) : undefined
   };
 }
