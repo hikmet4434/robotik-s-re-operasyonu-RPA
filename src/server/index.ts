@@ -42,10 +42,12 @@ import {
   publishAutomationDraft,
   publishWorkflow,
   resolveApproval,
+  retryJob,
   runDueSchedules,
   runWorkflow,
   saveAiSettings,
   updateAutomationDraft,
+  updateOpportunityStatus,
   updateWorkflowConfiguration,
   updateDocumentField
 } from "./saasStore";
@@ -238,6 +240,20 @@ app.post("/api/opportunities", (req, res) => {
     return;
   }
   res.status(201).json(createOpportunity(parsed.data));
+});
+
+app.patch("/api/opportunities/:id", (req, res) => {
+  const schema = z.object({ status: z.enum(["fikir", "analiz", "hazir", "canli", "beklemede"]) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    res.json(updateOpportunityStatus(req.params.id, parsed.data.status));
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : "Otomasyon fikri bulunamadı." });
+  }
 });
 
 app.get("/api/workflows", (_req, res) => {
@@ -568,6 +584,14 @@ app.post("/api/jobs/:id/cancel", (req, res) => {
     res.json(cancelJob(req.params.id));
   } catch (error) {
     res.status(404).json({ error: error instanceof Error ? error.message : "Job iptal edilemedi." });
+  }
+});
+
+app.post("/api/jobs/:id/retry", (req, res) => {
+  try {
+    res.status(201).json(retryJob(req.params.id));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Job yeniden çalıştırılamadı." });
   }
 });
 

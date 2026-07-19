@@ -468,7 +468,10 @@ export interface SaasDashboard {
   };
   opportunities: AutomationOpportunity[];
   workflows: Workflow[];
+  queues: Queue[];
+  queueItems: QueueItem[];
   jobs: Job[];
+  jobLogs: JobRunLog[];
   approvals: ApprovalTask[];
   documents: DocumentRecord[];
   connectors: ConnectorAccount[];

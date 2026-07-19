@@ -3,7 +3,9 @@ import {
   ArrowDown,
   ArrowUp,
   Bot,
+  Check,
   CheckCircle2,
+  Clock3,
   Download,
   FileSearch,
   Gauge,
@@ -14,6 +16,7 @@ import {
   Play,
   Plus,
   Radio,
+  RefreshCw,
   ScreenShare,
   Save,
   ShieldCheck,
@@ -51,10 +54,10 @@ const tabLabels: Record<Tab, string> = {
   "ai-builder": "AI ile Hazırla",
   recorder: "Recorder Studio",
   workflows: "Otomasyonlar",
-  jobs: "Robot İşleri",
-  approvals: "Onaylar",
-  documents: "Dokümanlar",
-  opportunities: "Fikir Havuzu",
+  jobs: "Orchestrator",
+  approvals: "Action Center",
+  documents: "IDP Dokümanlar",
+  opportunities: "Automation Hub",
   connectors: "Entegrasyonlar",
   compliance: "Uyum"
 };
@@ -783,46 +786,107 @@ function Workflows({
 }
 
 function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<void> }) {
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(data.jobs[0]?.id ?? null);
+
   async function cancel(job: Job) {
     await api.cancelJob(job.id);
     await refresh();
   }
 
+  async function retry(job: Job) {
+    const created = await api.retryJob(job.id);
+    setSelectedJobId(created.id);
+    await refresh();
+  }
+
+  const selectedJob = data.jobs.find((job) => job.id === selectedJobId) ?? data.jobs[0];
+  const selectedLogs = selectedJob ? data.jobLogs.filter((log) => log.jobId === selectedJob.id) : [];
+  const scheduled = data.workflows.filter((workflow) => workflow.schedule?.enabled);
+  const activeCount = data.jobs.filter((job) => ["queued", "running", "waiting_approval"].includes(job.status)).length;
+
   return (
-    <section className="panel overflow-hidden">
-      <TableHeader title="Robot İşleri" subtitle="Queue, job lifecycle ve robot log takibi" />
-      <DataTable
-        headers={["Job", "Workflow", "Durum", "İlerleme", "Retry", "Sonuç", "Aksiyon"]}
-        rows={data.jobs.map((job) => [
-          job.id,
-          data.workflows.find((workflow) => workflow.id === job.workflowId)?.name ?? job.workflowId,
-          <StatusPill key="status" value={job.status} />,
-          `${Math.min(job.currentStepIndex, job.totalSteps)}/${job.totalSteps}`,
-          `${job.retryCount}/${job.maxRetries}`,
-          job.lastError || formatDate(job.createdAt),
-          job.status === "waiting_approval" || job.status === "queued" || job.status === "running" ? (
-            <button key="cancel" className="text-sm font-semibold text-danger" onClick={() => void cancel(job)}>
-              İptal
-            </button>
-          ) : (
-            <span key="done" className="text-sm text-muted">Kapandı</span>
-          )
-        ])}
-      />
-    </section>
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric label="Aktif İş" value={activeCount} detail={`${data.queueItems.filter((item) => item.status === "queued").length} kuyrukta`} />
+        <Metric label="Kuyruk" value={data.queues.length} detail={`${data.queueItems.length} toplam kalem`} />
+        <Metric label="Aktif Schedule" value={scheduled.length} detail={scheduled[0]?.schedule?.nextRunAt ? `Sonraki: ${formatDate(scheduled[0].schedule.nextRunAt)}` : "Zamanlama beklenmiyor"} />
+      </div>
+
+      <section className="panel overflow-hidden">
+        <TableHeader title="Orchestrator İşleri" subtitle="Job yaşam döngüsü, otomatik retry ve robot ataması" />
+        <DataTable
+          headers={["Job", "Workflow", "Durum", "İlerleme", "Retry", "Robot", "Aksiyon"]}
+          rows={data.jobs.map((job) => [
+            <button key="select" className="text-left font-mono text-xs font-semibold text-brand" onClick={() => setSelectedJobId(job.id)}>{job.id}</button>,
+            data.workflows.find((workflow) => workflow.id === job.workflowId)?.name ?? job.workflowId,
+            <StatusPill key="status" value={job.status} />,
+            `${Math.min(job.currentStepIndex, job.totalSteps)}/${job.totalSteps}`,
+            `${job.retryCount}/${job.maxRetries}`,
+            data.workers.find((worker) => worker.id === job.workerId)?.name ?? "Atanmadı",
+            ["waiting_approval", "queued", "running"].includes(job.status) ? (
+              <button key="cancel" className="text-sm font-semibold text-danger" onClick={() => void cancel(job)}>İptal</button>
+            ) : ["failed", "cancelled"].includes(job.status) ? (
+              <button key="retry" className="inline-flex items-center gap-1 text-sm font-semibold text-brand" onClick={() => void retry(job)}><RefreshCw size={14} />Yeniden çalıştır</button>
+            ) : <span key="done" className="text-sm text-muted">Tamamlandı</span>
+          ])}
+        />
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <section className="panel overflow-hidden">
+          <TableHeader title="Kuyruklar" subtitle="İş yükü ve bekleyen kalem görünümü" />
+          <DataTable
+            headers={["Kuyruk", "Bekleyen", "Çalışan", "Toplam"]}
+            rows={data.queues.map((queue) => {
+              const items = data.queueItems.filter((item) => item.queueId === queue.id);
+              return [queue.name, items.filter((item) => item.status === "queued").length, items.filter((item) => item.status === "running").length, items.length];
+            })}
+          />
+        </section>
+        <section className="panel overflow-hidden">
+          <TableHeader title="Job Logları" subtitle={selectedJob ? `${selectedJob.id} için zaman sıralı olaylar` : "İncelemek için bir job seçin"} />
+          <div className="max-h-80 divide-y divide-line overflow-y-auto">
+            {selectedLogs.length ? selectedLogs.map((log) => (
+              <div key={log.id} className="grid grid-cols-[90px_70px_1fr] gap-3 px-5 py-3 text-sm">
+                <span className="text-xs text-muted">{new Date(log.ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</span>
+                <StatusPill value={log.level} />
+                <span>{log.message}</span>
+              </div>
+            )) : <div className="p-5 text-sm text-muted">Bu iş için henüz log oluşmadı.</div>}
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
 function Approvals({ data, onResolve }: { data: SaasDashboard; onResolve: (task: ApprovalTask, approved: boolean) => void }) {
+  const [filter, setFilter] = useState<"pending" | "resolved" | "all">("pending");
+  const visible = data.approvals.filter((task) => filter === "all" || (filter === "pending" ? task.status === "pending" : task.status !== "pending"));
+  const overdue = data.approvals.filter((task) => task.status === "pending" && new Date(task.dueAt).getTime() < Date.now()).length;
+
   return (
-    <section className="grid gap-4 lg:grid-cols-2">
-      {data.approvals.map((task) => (
-        <div key={task.id} className="panel p-5">
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric label="Bekleyen" value={data.approvals.filter((task) => task.status === "pending").length} detail="İnsan kararı gerekiyor" />
+        <Metric label="SLA Aşımı" value={overdue} detail={overdue ? "Öncelikli müdahale" : "Süre aşımı yok"} />
+        <Metric label="Exception" value={data.approvals.filter((task) => task.status === "rejected").length} detail="Reddedilerek durdurulan" />
+      </div>
+      <section className="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div><h2 className="section-title">Action Center</h2><p className="muted">Robot ve doküman akışlarının insan karar kutusu</p></div>
+        <div className="inline-flex self-start rounded-md border border-line bg-white p-1">
+          {(["pending", "resolved", "all"] as const).map((value) => <button key={value} className={`min-h-9 px-3 text-sm font-semibold ${filter === value ? "rounded bg-teal-50 text-brand" : "text-muted"}`} onClick={() => setFilter(value)}>{value === "pending" ? "Bekleyen" : value === "resolved" ? "Tamamlanan" : "Tümü"}</button>)}
+        </div>
+      </section>
+      <section className="grid gap-4 lg:grid-cols-2">
+      {visible.map((task) => (
+        <div key={task.id} className={`panel p-5 ${task.status === "pending" && new Date(task.dueAt).getTime() < Date.now() ? "border-red-300" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <RiskBadge value={task.riskLevel} />
               <h2 className="mt-3 text-lg font-bold">{task.title}</h2>
               <p className="mt-2 text-sm leading-6 text-muted">{task.summary}</p>
+              <div className="mt-2 flex items-center gap-1 text-xs text-muted"><Clock3 size={13} />Son tarih: {formatDate(task.dueAt)}</div>
             </div>
             <StatusPill value={task.status} />
           </div>
@@ -841,13 +905,16 @@ function Approvals({ data, onResolve }: { data: SaasDashboard; onResolve: (task:
           ) : null}
         </div>
       ))}
-    </section>
+      {visible.length === 0 ? <div className="panel p-8 text-center text-sm text-muted lg:col-span-2">Bu görünümde onay görevi bulunmuyor.</div> : null}
+      </section>
+    </div>
   );
 }
 
 function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<void> }) {
   const [type, setType] = useState<DocumentRecord["type"]>("invoice");
   const [file, setFile] = useState<File | null>(null);
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -864,6 +931,17 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
     } finally {
       setIsUploading(false);
     }
+  }
+
+  async function verifyField(documentId: string, fieldId: string, currentValue: string) {
+    await api.updateDocumentField(documentId, { fieldId, value: draftValues[fieldId] ?? currentValue });
+    await refresh();
+  }
+
+  async function approveDocument(documentId: string) {
+    const task = data.approvals.find((approval) => approval.documentId === documentId && approval.status === "pending");
+    if (task) await api.approveTask(task.id);
+    await refresh();
   }
 
   return (
@@ -893,8 +971,10 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
         {error ? <div className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200">{error}</div> : null}
       </section>
       <section className="grid gap-4 lg:grid-cols-2">
-        {data.documents.map((doc) => (
-          <div key={doc.id} className="panel p-5">
+        {data.documents.map((doc) => {
+          const pendingTask = data.approvals.find((approval) => approval.documentId === doc.id && approval.status === "pending");
+          const averageConfidence = doc.fields.length ? Math.round(doc.fields.reduce((sum, field) => sum + field.confidence, 0) / doc.fields.length) : 0;
+          return <div key={doc.id} className="panel p-5">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-bold">{doc.name}</h2>
@@ -904,21 +984,21 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
                   {doc.sizeBytes ? ` · ${Math.ceil(doc.sizeBytes / 1024)} KB` : ""}
                 </div>
               </div>
-              <FileSearch className="text-brand" size={22} />
+              <div className="text-right"><FileSearch className="ml-auto text-brand" size={22} /><div className="mt-1 text-xs font-semibold text-muted">Ort. %{averageConfidence}</div></div>
             </div>
             <div className="mt-4 space-y-2">
               {doc.fields.map((field) => (
-                <div key={field.id} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 p-3 ring-1 ring-line">
-                  <div>
-                    <div className="text-sm font-semibold">{field.label}</div>
-                    <div className="text-sm text-muted">{field.value}</div>
-                  </div>
+                <div key={field.id} className="grid gap-2 rounded-md bg-slate-50 p-3 ring-1 ring-line sm:grid-cols-[120px_1fr_auto_auto] sm:items-center">
+                  <div className="text-sm font-semibold">{field.label}</div>
+                  <input className="input min-w-0" value={draftValues[field.id] ?? field.value} onChange={(event) => setDraftValues((current) => ({ ...current, [field.id]: event.target.value }))} />
                   <span className={`badge ${field.confidence < 80 ? "bg-red-100 text-red-800 ring-red-200" : field.confidence < 96 ? "bg-amber-100 text-amber-800 ring-amber-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200"}`}>%{field.confidence}</span>
+                  <button className="icon-button" title={field.verified ? "Alan doğrulandı" : "Alanı doğrula"} onClick={() => void verifyField(doc.id, field.id, field.value)}><Check size={16} className={field.verified ? "text-emerald-600" : "text-muted"} /></button>
                 </div>
               ))}
             </div>
-          </div>
-        ))}
+            {pendingTask ? <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4"><span className="text-sm text-amber-800">Düşük güvenli alanlar insan onayı bekliyor.</span><button className="button-primary shrink-0" onClick={() => void approveDocument(doc.id)}><CheckCircle2 size={16} />Dokümanı Onayla</button></div> : null}
+          </div>;
+        })}
       </section>
     </div>
   );
@@ -926,30 +1006,49 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
 
 function Opportunities({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<void> }) {
   const [title, setTitle] = useState("Yeni KOBİ otomasyonu");
+  const [department, setDepartment] = useState("Operasyon");
+  const [monthlyVolume, setMonthlyVolume] = useState(120);
+  const [minutesPerTask, setMinutesPerTask] = useState(7);
+  const [errorRisk, setErrorRisk] = useState(3);
+  const [feasibility, setFeasibility] = useState(80);
+  const roiForecast = Math.round(monthlyVolume * minutesPerTask * (1 + errorRisk / 10) * (feasibility / 100));
 
   async function add() {
-    await api.createOpportunity({ title, department: "Operasyon", monthlyVolume: 120, minutesPerTask: 7, errorRisk: 3, feasibility: 80 });
+    await api.createOpportunity({ title, department, monthlyVolume, minutesPerTask, errorRisk, feasibility });
     setTitle("Yeni KOBİ otomasyonu");
+    await refresh();
+  }
+
+  async function advance(item: AutomationOpportunity) {
+    const next: Partial<Record<AutomationOpportunity["status"], AutomationOpportunity["status"]>> = { fikir: "analiz", analiz: "hazir", hazir: "canli", beklemede: "analiz" };
+    const status = next[item.status];
+    if (!status) return;
+    await api.updateOpportunity(item.id, status);
     await refresh();
   }
 
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="section-title">Otomasyon Fikri Ekle</h2>
-        <div className="mt-4 flex gap-3">
-          <input className="input" value={title} onChange={(event) => setTitle(event.target.value)} />
-          <button className="button-primary" onClick={() => void add()}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="section-title">Automation Hub Fikri</h2><p className="muted">İş hacmi ve uygulanabilirlik üzerinden öncelik puanı hesaplanır.</p></div><div className="rounded-md bg-teal-50 px-4 py-2 text-sm font-semibold text-brand ring-1 ring-teal-100">Tahmini ROI puanı: {roiForecast}</div></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.5fr_1fr_120px_120px_120px_140px_auto]">
+          <input className="input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Süreç adı" />
+          <input className="input" value={department} onChange={(event) => setDepartment(event.target.value)} placeholder="Departman" />
+          <label className="text-xs font-semibold text-muted">Aylık adet<input className="input mt-1" type="number" min="1" value={monthlyVolume} onChange={(event) => setMonthlyVolume(Number(event.target.value))} /></label>
+          <label className="text-xs font-semibold text-muted">Dakika/iş<input className="input mt-1" type="number" min="1" value={minutesPerTask} onChange={(event) => setMinutesPerTask(Number(event.target.value))} /></label>
+          <label className="text-xs font-semibold text-muted">Hata riski<input className="input mt-1" type="number" min="1" max="5" value={errorRisk} onChange={(event) => setErrorRisk(Number(event.target.value))} /></label>
+          <label className="text-xs font-semibold text-muted">Uygulanabilirlik<input className="input mt-1" type="number" min="1" max="100" value={feasibility} onChange={(event) => setFeasibility(Number(event.target.value))} /></label>
+          <button className="button-primary self-end" onClick={() => void add()} disabled={title.trim().length < 3 || department.trim().length < 2}>
             <Plus size={16} />
             Ekle
           </button>
         </div>
       </section>
       <section className="panel overflow-hidden">
-        <TableHeader title="Fikir Havuzu" subtitle="Automation Hub mantığında ROI ve uygulanabilirlik puanı" />
+        <TableHeader title="Otomasyon Portföyü" subtitle="ROI, uygulanabilirlik ve değerlendirme aşaması" />
         <DataTable
-          headers={["Süreç", "Departman", "Hacim", "Dakika", "Risk", "ROI", "Durum"]}
-          rows={data.opportunities.map((item) => [item.title, item.department, item.monthlyVolume, item.minutesPerTask, item.errorRisk, item.roiScore, item.status])}
+          headers={["Süreç", "Departman", "Hacim", "Süre", "Risk", "Uygulanabilirlik", "ROI", "Aşama"]}
+          rows={data.opportunities.map((item) => [item.title, item.department, item.monthlyVolume, `${item.minutesPerTask} dk`, `${item.errorRisk}/5`, `%${item.feasibility}`, item.roiScore, <button key="status" className="inline-flex items-center gap-2" onClick={() => void advance(item)} disabled={item.status === "canli"}><StatusPill value={item.status} />{item.status !== "canli" ? <span className="text-xs font-semibold text-brand">İlerle</span> : null}</button>])}
         />
       </section>
     </div>
@@ -1049,6 +1148,16 @@ function Compliance({ data, refresh }: { data: SaasDashboard; refresh: () => Pro
         <TableHeader title="Audit Log" subtitle="Tenant scope ile robot, AI, kullanıcı ve sistem olayları" />
         <DataTable headers={["Zaman", "Aktör", "Aksiyon", "Varlık"]} rows={data.audit.map((event) => [formatDate(event.ts), event.actor, event.action, `${event.entityType}:${event.entityId}`])} />
       </section>
+    </div>
+  );
+}
+
+function Metric({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <div className="panel p-5">
+      <div className="text-sm font-medium text-muted">{label}</div>
+      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <div className="mt-1 text-xs text-muted">{detail}</div>
     </div>
   );
 }

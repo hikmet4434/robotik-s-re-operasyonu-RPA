@@ -8,10 +8,10 @@ const links = [
   { to: "/ai-builder", label: "AI ile Hazırla", icon: Sparkles },
   { to: "/recorder", label: "Recorder Studio", icon: Radio },
   { to: "/workflows", label: "Otomasyonlar", icon: Workflow },
-  { to: "/jobs", label: "Robot İşleri", icon: Bot },
-  { to: "/approvals", label: "Onaylar", icon: Inbox },
-  { to: "/documents", label: "Dokümanlar", icon: FileSearch },
-  { to: "/opportunities", label: "Fikir Havuzu", icon: Lightbulb },
+  { to: "/jobs", label: "Orchestrator", icon: Bot },
+  { to: "/approvals", label: "Action Center", icon: Inbox },
+  { to: "/documents", label: "IDP Dokümanlar", icon: FileSearch },
+  { to: "/opportunities", label: "Automation Hub", icon: Lightbulb },
   { to: "/connectors", label: "Entegrasyonlar", icon: KeyRound },
   { to: "/compliance", label: "Uyum", icon: ShieldCheck }
 ];

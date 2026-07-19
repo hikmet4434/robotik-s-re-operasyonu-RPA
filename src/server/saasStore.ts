@@ -556,7 +556,10 @@ export function getDashboard(): SaasDashboard {
     },
     opportunities: scoped.opportunities,
     workflows: scoped.workflows,
+    queues: scoped.queues,
+    queueItems: scoped.queueItems,
     jobs: scoped.jobs,
+    jobLogs: scoped.jobLogs,
     approvals: scoped.approvals,
     documents: scoped.documents,
     connectors: scoped.connectors,
@@ -963,6 +966,15 @@ export function createOpportunity(input: Pick<AutomationOpportunity, "title" | "
   return opportunity;
 }
 
+export function updateOpportunityStatus(opportunityId: string, status: AutomationOpportunity["status"]) {
+  const state = readState();
+  const opportunity = findTenantRecord(state.opportunities, opportunityId);
+  opportunity.status = status;
+  audit(state, "user", `Otomasyon fikri ${status} aşamasına taşındı.`, "opportunity", opportunity.id);
+  writeState(state);
+  return opportunity;
+}
+
 export function publishWorkflow(workflowId: string) {
   const state = readState();
   const workflow = findTenantRecord(state.workflows, workflowId);
@@ -1032,6 +1044,16 @@ export function cancelJob(jobId: string) {
   audit(state, "user", "Robot işi iptal edildi.", "job", jobId);
   writeState(state);
   return job;
+}
+
+export function retryJob(jobId: string) {
+  const state = readState();
+  const job = findTenantRecord(state.jobs, jobId);
+  if (!["failed", "cancelled"].includes(job.status)) {
+    throw new Error("Yalnızca başarısız veya iptal edilmiş işler yeniden çalıştırılabilir.");
+  }
+  const queueItem = state.queueItems.find((item) => item.id === job.queueItemId);
+  return runWorkflow(job.workflowId, `Yeniden çalıştırma: ${queueItem?.payloadSummary || job.id}`);
 }
 
 export function resolveApproval(approvalId: string, approved: boolean) {

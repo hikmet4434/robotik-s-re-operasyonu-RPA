@@ -75,6 +75,7 @@ export const api = {
   createAiWorkflow: (body: AiAutomationPlan) => request<Workflow>("/api/ai/workflows", { method: "POST", body: JSON.stringify(body) }),
   jobs: () => request<Array<Job & { logs: unknown[]; workflow?: Workflow }>>("/api/jobs"),
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }),
+  retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: "POST", body: "{}" }),
   approvals: () => request<ApprovalTask[]>("/api/approvals"),
   approveTask: (id: string) => request<ApprovalTask>(`/api/approvals/${id}/approve`, { method: "POST", body: "{}" }),
   rejectTask: (id: string) => request<ApprovalTask>(`/api/approvals/${id}/reject`, { method: "POST", body: "{}" }),
@@ -90,6 +91,8 @@ export const api = {
     request<DocumentRecord>(`/api/documents/${id}/fields`, { method: "PATCH", body: JSON.stringify(body) }),
   createOpportunity: (body: Pick<AutomationOpportunity, "title" | "department" | "monthlyVolume" | "minutesPerTask" | "errorRisk" | "feasibility">) =>
     request<AutomationOpportunity>("/api/opportunities", { method: "POST", body: JSON.stringify(body) }),
+  updateOpportunity: (id: string, status: AutomationOpportunity["status"]) =>
+    request<AutomationOpportunity>(`/api/opportunities/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   createConnector: (body: { type: ConnectorAccount["type"]; name: string; secret?: string; username?: string; password?: string; loginUrl?: string }) =>
     request<ConnectorAccount>("/api/connectors", { method: "POST", body: JSON.stringify(body) }),
   localAgentHealth: async () => {
