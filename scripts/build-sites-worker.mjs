@@ -248,6 +248,9 @@ function seedState() {
     ],
     workflows,
     jobs: [],
+    queues: [{ id: QUEUE_ID, organizationId: ORG_ID, name: "KOBI Operasyon Kuyrugu", description: "Bulut onizleme otomasyon isleri", createdAt: ts }],
+    queueItems: [],
+    jobLogs: [],
     approvals: [
       {
         id: "app_seed_01",
@@ -372,7 +375,13 @@ function opportunity(title, department, monthlyVolume, minutesPerTask, errorRisk
 
 function getState() {
   globalThis.__OTOFLOW_DEMO_STATE ??= seedState();
-  return globalThis.__OTOFLOW_DEMO_STATE;
+  const state = globalThis.__OTOFLOW_DEMO_STATE;
+  const arrayKeys = ["opportunities", "workflows", "jobs", "queues", "queueItems", "jobLogs", "approvals", "documents", "connectors", "credentialProfiles", "policies", "audit", "workers", "recordingSessions", "recorderEvents", "automationDrafts", "files"];
+  for (const key of arrayKeys) {
+    if (!Array.isArray(state[key])) state[key] = [];
+  }
+  if (state.queues.length === 0) state.queues.push({ id: QUEUE_ID, organizationId: ORG_ID, name: "KOBI Operasyon Kuyrugu", description: "Bulut onizleme otomasyon isleri", createdAt: now() });
+  return state;
 }
 
 function audit(state, actor, action, entityType, entityId) {
@@ -404,7 +413,10 @@ function dashboard() {
     },
     opportunities: state.opportunities,
     workflows: state.workflows,
+    queues: state.queues,
+    queueItems: state.queueItems,
     jobs: state.jobs,
+    jobLogs: state.jobLogs,
     approvals: state.approvals,
     documents: state.documents,
     connectors: state.connectors,
@@ -442,7 +454,7 @@ async function handleApi(request, url) {
   if (method === "GET" && path === "/api/dashboard") return json(dashboard());
   if (method === "GET" && path === "/api/workflows") return json(state.workflows.map((workflow) => ({ ...workflow, version: { id: workflow.currentVersionId, workflowId: workflow.id, version: 1, steps: [] } })));
   if (method === "GET" && path === "/api/recordings") return json(state.recordingSessions.map((session) => ({ ...session, events: state.recorderEvents.filter((event) => event.target.startsWith(session.id + ":")), draft: state.automationDrafts.find((draft) => draft.recordingSessionId === session.id) })));
-  if (method === "GET" && path === "/api/jobs") return json(state.jobs);
+  if (method === "GET" && path === "/api/jobs") return json(state.jobs.map((job) => ({ ...job, workflow: state.workflows.find((workflow) => workflow.id === job.workflowId), logs: state.jobLogs.filter((log) => log.jobId === job.id) })));
   if (method === "GET" && path === "/api/approvals") return json(state.approvals);
   if (method === "GET" && path === "/api/connectors") return json(state.connectors);
   if (method === "GET" && path === "/api/credentials") return json(state.credentialProfiles);
@@ -621,7 +633,9 @@ async function handleApi(request, url) {
     const queueItemId = id("qitem");
     const totalSteps = Math.max(1, (workflow.steps || []).length);
     const job = { id: id("job"), organizationId: ORG_ID, workflowId: workflow.id, queueItemId, workerId: WORKER_ID, status: requiresApproval ? "waiting_approval" : "succeeded", retryCount: 0, maxRetries: 2, currentStepIndex: requiresApproval ? Math.max(0, configuredApprovalStep) : totalSteps, totalSteps, startedAt: now(), completedAt: requiresApproval ? undefined : now(), createdAt: now() };
+    state.queueItems.unshift({ id: queueItemId, organizationId: ORG_ID, queueId: QUEUE_ID, workflowId: workflow.id, status: job.status, payloadSummary: body.payloadSummary || "Manuel calistirma", createdAt: job.createdAt });
     state.jobs.unshift(job);
+    state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level: "info", message: requiresApproval ? "Otomasyon insan onayi bekliyor." : "Otomasyon basariyla tamamlandi." });
     if (requiresApproval) {
       state.approvals.unshift({ id: id("app"), organizationId: ORG_ID, jobId: job.id, title: workflow.name + " icin onay", summary: "Bu otomasyon riskli veya yasal/finansal etkili bir adim iceriyor.", riskLevel: workflow.id === "wf_customs" ? "critical" : "high", status: "pending", diff: [{ label: "Robot ciktisi", before: "Taslak", after: body.payloadSummary || "Demo calistirma" }, { label: "Final aksiyon", before: "Kapali", after: "Onay sonrasi calisacak" }], dueAt: new Date(Date.now() + 86400000).toISOString(), createdAt: now() });
     }
@@ -635,6 +649,9 @@ async function handleApi(request, url) {
     if (!job) return error("Job bulunamadi.", 404);
     job.status = "cancelled";
     job.completedAt = now();
+    const queueItem = state.queueItems.find((item) => item.id === job.queueItemId);
+    if (queueItem) queueItem.status = "cancelled";
+    state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level: "warn", message: "Otomasyon kullanici tarafindan iptal edildi." });
     audit(state, "user", "Robot isi iptal edildi.", "job", job.id);
     return json(job);
   }
@@ -650,7 +667,11 @@ async function handleApi(request, url) {
       const job = state.jobs.find((item) => item.id === approval.jobId);
       if (job) {
         job.status = approved ? "succeeded" : "failed";
+        job.currentStepIndex = approved ? job.totalSteps : job.currentStepIndex;
         job.completedAt = now();
+        const queueItem = state.queueItems.find((item) => item.id === job.queueItemId);
+        if (queueItem) queueItem.status = job.status;
+        state.jobLogs.unshift({ id: id("log"), organizationId: ORG_ID, jobId: job.id, ts: now(), level: approved ? "info" : "error", message: approved ? "Onay alindi; otomasyon tamamlandi." : "Onay reddedildi; otomasyon durduruldu." });
       }
     }
     audit(state, "user", approved ? "Onay gorevi onaylandi." : "Onay gorevi reddedildi.", "approval", approval.id);

@@ -37,8 +37,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+const dashboardCollectionKeys = [
+  "opportunities", "workflows", "queues", "queueItems", "jobs", "jobLogs", "approvals", "documents",
+  "connectors", "credentialProfiles", "policies", "audit", "workers", "recordingSessions", "recorderEvents", "automationDrafts"
+] as const;
+
+export function normalizeSaasDashboard(payload: SaasDashboard): SaasDashboard {
+  const normalized = { ...payload } as SaasDashboard & Record<string, unknown>;
+  for (const key of dashboardCollectionKeys) {
+    if (!Array.isArray(normalized[key])) normalized[key] = [];
+  }
+  return normalized;
+}
+
 export const api = {
-  dashboard: () => request<SaasDashboard>("/api/dashboard"),
+  dashboard: async () => normalizeSaasDashboard(await request<SaasDashboard>("/api/dashboard")),
   legacyDashboard: () => request<DashboardPayload>("/api/legacy/dashboard"),
   me: () => request("/api/me"),
   workflows: () => request<Array<Workflow & { version?: { steps: unknown[] } }>>("/api/workflows"),

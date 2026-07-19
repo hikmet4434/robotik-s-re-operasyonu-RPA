@@ -27,8 +27,8 @@ export function AppLayout() {
 
   useEffect(() => {
     api.dashboard().then((payload) => {
-      setPending(payload.approvals.filter((approval) => approval.status === "pending").length);
-    });
+      setPending((payload.approvals ?? []).filter((approval) => approval.status === "pending").length);
+    }).catch(() => setPending(0));
   }, [location.pathname]);
 
   return (
@@ -85,10 +85,15 @@ export function AppLayout() {
               <div className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200 md:block">
                 E-imza/PIN saklama kapalı
               </div>
-              <button className="relative hidden sm:inline-flex icon-button" title="Bekleyen onaylar">
+              <NavLink
+                to="/approvals"
+                className="relative hidden sm:inline-flex icon-button"
+                title="Bekleyen onayları aç"
+                aria-label={pending > 0 ? `${pending} bekleyen onayı aç` : "Onay görevlerini aç"}
+              >
                 <Bell size={19} />
-                {pending > 0 ? <span className="notification-count">{pending}</span> : null}
-              </button>
+                {pending > 0 ? <span className="notification-count" aria-hidden="true">{pending}</span> : null}
+              </NavLink>
             </div>
           </header>
           <AutomationActivityBar />
@@ -101,9 +106,10 @@ export function AppLayout() {
       <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-white px-1 pb-[max(6px,env(safe-area-inset-bottom))] pt-1 lg:hidden" aria-label="Temel menü">
         {mobileLinks.map((link) => {
           const Icon = link.icon;
-          return <NavLink key={link.to} to={link.to} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-1 rounded text-[10px] font-semibold ${isActive ? "text-brand" : "text-muted"}`}>
+          return <NavLink key={link.to} to={link.to} className={({ isActive }) => `relative flex min-h-14 flex-col items-center justify-center gap-1 rounded text-[10px] font-semibold ${isActive ? "text-brand" : "text-muted"}`}>
             <Icon size={19} />
             <span className="max-w-full truncate px-1">{link.to === "/ai-builder" ? "Oluştur" : link.to === "/workflows" ? "Otomasyon" : link.to === "/approvals" ? "Onaylar" : link.label}</span>
+            {link.to === "/approvals" && pending > 0 ? <span className="notification-count right-2 top-1" aria-hidden="true">{pending}</span> : null}
           </NavLink>;
         })}
       </nav>
