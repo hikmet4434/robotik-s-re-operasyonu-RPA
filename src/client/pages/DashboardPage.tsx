@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowDown,
   ArrowUp,
   Bot,
@@ -27,7 +28,7 @@ import {
   Upload
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import type {
   ApprovalTask,
   AutomationDraft,
@@ -45,28 +46,39 @@ import type {
 } from "../../shared/saasTypes";
 import { api } from "../api";
 import { formatDate, formatNumber } from "../utils";
+import { useExperienceMode } from "../ui/ExperienceMode";
 import { AiAutomationBuilder } from "./AiAutomationBuilder";
 
 type Tab = "dashboard" | "ai-builder" | "recorder" | "workflows" | "jobs" | "approvals" | "documents" | "opportunities" | "connectors" | "compliance";
 
 const tabLabels: Record<Tab, string> = {
-  dashboard: "Genel Bakış",
-  "ai-builder": "AI ile Hazırla",
-  recorder: "Recorder Studio",
-  workflows: "Otomasyonlar",
-  jobs: "Orchestrator",
-  approvals: "Action Center",
-  documents: "IDP Dokümanlar",
-  opportunities: "Automation Hub",
-  connectors: "Entegrasyonlar",
-  compliance: "Uyum"
+  dashboard: "Ana Sayfa",
+  "ai-builder": "Yazarak Oluştur",
+  recorder: "Göstererek Oluştur",
+  workflows: "Otomasyonlarım",
+  jobs: "İş Takibi",
+  approvals: "Onay Bekleyenler",
+  documents: "Belgeler",
+  opportunities: "Fikirler ve Kazanç",
+  connectors: "Hesaplar",
+  compliance: "Güvenlik"
 };
+
+const tabPaths: Record<Tab, string> = Object.fromEntries((Object.keys(tabLabels) as Tab[]).map((tab) => [tab, tab === "dashboard" ? "/dashboard" : `/${tab}`])) as Record<Tab, string>;
+const simpleTabs: Tab[] = ["dashboard", "ai-builder", "recorder", "workflows", "approvals", "documents", "connectors"];
 
 export function DashboardPage() {
   const [data, setData] = useState<SaasDashboard | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [message, setMessage] = useState<string | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { mode } = useExperienceMode();
+  const visibleTabs = (Object.keys(tabLabels) as Tab[]).filter((tab) => mode === "advanced" || simpleTabs.includes(tab));
+
+  function openTab(tab: Tab) {
+    navigate(tabPaths[tab]);
+  }
 
   async function refresh() {
     setData(await api.dashboard());
@@ -104,7 +116,7 @@ export function DashboardPage() {
       await api.runWorkflow(workflow.id, `${workflow.name} için KOBİ demo çalıştırması`);
       setMessage(`${workflow.name} robot kuyruğuna alındı.`);
       await refresh();
-      setActiveTab("jobs");
+      openTab("jobs");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Robot çalıştırılamadı.");
     }
@@ -122,11 +134,11 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <Hero data={data} />
+      <Hero data={data} mode={mode} />
 
-      <div className="flex gap-2 overflow-x-auto border-b border-line pb-2">
-        {(Object.keys(tabLabels) as Tab[]).map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`min-h-10 rounded-md px-3 text-sm font-semibold ${activeTab === tab ? "bg-teal-50 text-brand ring-1 ring-teal-100" : "text-muted hover:bg-white hover:text-ink"}`}>
+      <div className={`${mode === "simple" ? "hidden lg:flex" : "flex"} gap-2 overflow-x-auto border-b border-line pb-2`}>
+        {visibleTabs.map((tab) => (
+          <button key={tab} onClick={() => openTab(tab)} className={`min-h-10 shrink-0 rounded-md px-3 text-sm font-semibold ${activeTab === tab ? "bg-teal-50 text-brand ring-1 ring-teal-100" : "text-muted hover:bg-white hover:text-ink"}`}>
             {tabLabels[tab]}
           </button>
         ))}
@@ -134,7 +146,7 @@ export function DashboardPage() {
 
       {message ? <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">{message}</div> : null}
 
-      {activeTab === "dashboard" ? <Overview data={data} setTab={setActiveTab} /> : null}
+      {activeTab === "dashboard" ? <Overview data={data} mode={mode} openTab={openTab} /> : null}
       {activeTab === "ai-builder" ? <AiAutomationBuilder refreshDashboard={refresh} /> : null}
       {activeTab === "recorder" ? <RecorderStudio data={data} refreshDashboard={refresh} /> : null}
       {activeTab === "workflows" ? <Workflows data={data} onRun={runWorkflow} refresh={refresh} setMessage={setMessage} /> : null}
@@ -149,6 +161,7 @@ export function DashboardPage() {
 }
 
 function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refreshDashboard: () => Promise<void> }) {
+  const { mode, setMode } = useExperienceMode();
   const [title, setTitle] = useState("Günlük rapor indir ve e-posta hazırla");
   const [goal, setGoal] = useState("Portala gir, günlük satış raporunu filtrele, raporu indir, e-postaları özetle ve müşteriye onaylı e-posta taslağı hazırla.");
   const [appName, setAppName] = useState("Demo Portal + E-posta");
@@ -281,25 +294,25 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
 
   return (
     <div className="space-y-6">
-      <RecorderInstallPanel />
+      {mode === "advanced" ? <RecorderInstallPanel /> : !agentOnline ? <section className="flex flex-col gap-3 border-b border-amber-200 bg-amber-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-semibold text-amber-950">Bilgisayar bağlantısı henüz kurulmadı</div><p className="mt-1 text-sm text-amber-900">Tarayıcı içindeki örnek alanı kullanabilir veya bağlantı kurulumunu açabilirsiniz.</p></div><button className="button-secondary shrink-0" onClick={() => setMode("advanced")}>Bağlantı Kurulumunu Aç</button></section> : null}
 
       <section className="panel p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800 ring-1 ring-blue-100">
               <Radio size={14} />
-              İş Kaydet → AI Anla → Otomasyon Oluştur
+              Bir kez gösterin, tekrarını OtoFlow yapsın
             </div>
-            <h2 className="text-xl font-bold">Recorder Studio</h2>
+            <h2 className="text-xl font-bold">Yaptığınız işi gösterin</h2>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
-              Kullanıcı işi normal yapar; sistem tıklama, alan seçimi, sekme, rapor, e-posta ve ekran kaydı metadata’sını toplar. AI bunu küçük otomasyonlara ve birleşik workflow’a dönüştürür.
+              Önce işin adını ve amacını yazın. Kaydı başlattıktan sonra işlemi her zamanki gibi bir kez yapın.
             </p>
             <div className="mt-3"><StatusPill value={agentOnline ? "local_agent_online" : "local_agent_offline"} /></div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="button-secondary" onClick={() => void startScreenRecording()} disabled={screenStatus === "recording"}>
               <ScreenShare size={16} />
-              Ekran Kaydı
+              Tarayıcı Ekranını Kaydet
             </button>
             <button className="button-secondary" onClick={() => void stopScreenRecording()} disabled={screenStatus !== "recording"}>
               Durdur
@@ -313,7 +326,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
             </button>
             <button className="button-primary" onClick={() => void startSession()}>
               <Radio size={16} />
-              İşi Kaydet
+              Adımları Kaydetmeye Başla
             </button>
           </div>
         </div>
@@ -334,8 +347,8 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
         <section className="panel p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="section-title">Demo Çalışma Alanı</h2>
-              <p className="muted">Gerçek üründe bu katman Chrome extension ve yerel ajan ile harici uygulamaları da izler.</p>
+              <h2 className="section-title">Deneme Alanı</h2>
+              <p className="muted">Kaydı başlattıktan sonra aşağıdaki örnek işlemi tamamlayın.</p>
             </div>
             <StatusPill value={session ? "recording" : "idle"} />
           </div>
@@ -352,15 +365,15 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
         </section>
 
         <section className="panel overflow-hidden">
-          <TableHeader title="Yakalanan İş Adımları" subtitle={`${events.length} olay · ${screenStatus === "recording" ? "ekran kaydı sürüyor" : screenStatus === "captured" ? "ekran kaydı hazır" : "ekran kaydı opsiyonel"}`} />
+          <TableHeader title="Kaydedilen Adımlar" subtitle={`${events.length} adım · ${screenStatus === "recording" ? "ekran kaydı sürüyor" : screenStatus === "captured" ? "ekran kaydı hazır" : "ekran kaydı isteğe bağlı"}`} />
           <div className="max-h-[520px] overflow-y-auto p-4">
             {events.length === 0 ? <div className="rounded-md bg-slate-50 p-4 text-sm text-muted ring-1 ring-line">Kayıt başlayınca tıklamalar, inputlar ve rapor/e-posta adımları burada görünür.</div> : null}
             <div className="space-y-2">
               {events.map((event, index) => (
                 <div key={event.id} className="rounded-md border border-line bg-white p-3">
-                  <div className="text-xs font-semibold text-brand">{index + 1}. {event.type}</div>
+                  <div className="text-xs font-semibold text-brand">{index + 1}. adım{mode === "advanced" ? ` · ${event.type}` : ""}</div>
                   <div className="mt-1 text-sm font-medium">{event.label}</div>
-                  <div className="mt-1 text-xs text-muted">{event.appArea} · {event.value ?? event.selectorHint ?? event.target}</div>
+                  {mode === "advanced" ? <div className="mt-1 text-xs text-muted">{event.appArea} · {event.value ?? event.selectorHint ?? event.target}</div> : null}
                 </div>
               ))}
             </div>
@@ -368,7 +381,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
           <div className="border-t border-line p-4">
             <button className="button-primary w-full" disabled={!session || events.length === 0} onClick={() => void analyze()}>
               <Sparkles size={16} />
-              AI ile Otomasyona Çevir
+              Bu Adımlardan Otomasyon Hazırla
             </button>
           </div>
         </section>
@@ -499,6 +512,8 @@ function AutomationDraftPanel({
   onSave: (draft: AutomationDraft) => Promise<void>;
   onPublish: () => Promise<void>;
 }) {
+  const { mode } = useExperienceMode();
+
   function updateStep(index: number, patch: Partial<WorkflowStep>) {
     onChange({ ...draft, steps: draft.steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step) });
   }
@@ -529,13 +544,13 @@ function AutomationDraftPanel({
         <div>
           <h2 className="text-xl font-bold">{draft.title}</h2>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">{draft.objective}</p>
-          <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-100">AI güveni %{draft.confidence}</div>
+          <div className="mt-3 inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-100">Hazırlık güveni %{draft.confidence}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="button-secondary" onClick={() => void onSave(draft)}><Save size={16} />Kaydet</button>
           <button className="button-primary" onClick={() => void onSave(draft).then(onPublish)} disabled={draft.status === "published"}>
             <CheckCircle2 size={16} />
-            Workflow Olarak Yayınla
+            Kullanıma Aç
           </button>
         </div>
       </div>
@@ -544,30 +559,30 @@ function AutomationDraftPanel({
         <h3 className="font-bold text-teal-950">Başlangıç Ayarları</h3>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <label className="text-sm font-semibold text-teal-950">
-            Bu workflow hangi hesapla çalışacak?
+            Bu otomasyon hangi hesapla çalışacak?
             <select className="input mt-2" value={draft.credentialId || ""} onChange={(event) => onChange({ ...draft, credentialId: event.target.value || undefined })}>
               <option value="">Hesap gerekmiyor / daha sonra seç</option>
               {credentialProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.usernamePreview}</option>)}
             </select>
           </label>
           <div className="text-sm leading-6 text-teal-950">
-            Teknik kullanıcı aşağıdaki adımlardan hangilerinde robotun durup onay istemesi gerektiğini seçer. Şifre workflow içine yazılmaz; yalnızca seçilen kasa kaydına bağlanır.
+            Robotun durup sizden onay istemesini istediğiniz adımları aşağıdan seçin. Hesap şifresi otomasyonun içine yazılmaz.
           </div>
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className={`mt-6 grid gap-6 ${mode === "advanced" ? "xl:grid-cols-[1.2fr_0.8fr]" : "grid-cols-1"}`}>
         <div>
-          <div className="flex items-center justify-between gap-3"><h3 className="font-bold">Otomasyon Adımları ve Onay Noktaları</h3><button className="button-secondary" onClick={addStep}><Plus size={16} />Adım Ekle</button></div>
+          <div className="flex items-center justify-between gap-3"><h3 className="font-bold">Otomasyon Adımları ve Onay Noktaları</h3>{mode === "advanced" ? <button className="button-secondary" onClick={addStep}><Plus size={16} />Adım Ekle</button> : null}</div>
           <div className="mt-3 space-y-3">
             {draft.steps.map((step, index) => (
               <div key={step.id} className="rounded-lg border border-line bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <select className="input max-w-64" value={step.type} onChange={(event) => updateStep(index, { type: event.target.value as WorkflowStep["type"] })}>
+                  {mode === "advanced" ? <select className="input max-w-64" value={step.type} onChange={(event) => updateStep(index, { type: event.target.value as WorkflowStep["type"] })}>
                     <optgroup label="Tarayıcı"><option value="browser.navigate">Sayfa aç</option><option value="browser.click">Tıkla</option><option value="browser.type">Yaz</option><option value="browser.select">Seç</option><option value="browser.extract">Oku</option><option value="browser.wait">Bekle</option></optgroup>
                     <optgroup label="Masaüstü"><option value="desktop.launch">Uygulama aç</option><option value="desktop.click">Ekrana tıkla</option><option value="desktop.type">Yaz</option><option value="desktop.hotkey">Kısayol</option><option value="desktop.wait">Bekle</option></optgroup>
                     <option value="approval.wait">Yalnızca onay bekle</option>
-                  </select>
+                  </select> : <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-sm font-bold text-muted">{index + 1}</span>}
                   <div className="flex gap-1">
                     <button className="icon-button" title="Yukarı taşı" onClick={() => moveStep(index, -1)} disabled={index === 0}><ArrowUp size={16} /></button>
                     <button className="icon-button" title="Aşağı taşı" onClick={() => moveStep(index, 1)} disabled={index === draft.steps.length - 1}><ArrowDown size={16} /></button>
@@ -576,7 +591,7 @@ function AutomationDraftPanel({
                 </div>
                 <input className="input mt-2 font-semibold" value={step.title} onChange={(event) => updateStep(index, { title: event.target.value })} />
                 <div className="mt-1 text-sm text-muted">{step.description}</div>
-                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                <div className={`mt-3 gap-2 md:grid-cols-2 ${mode === "advanced" ? "grid" : "hidden"}`}>
                   {step.type === "browser.navigate" ? <input className="input" placeholder="https://erp.example.com" value={step.parameters?.url || ""} onChange={(event) => updateParameters(index, { url: event.target.value })} /> : null}
                   {step.type.startsWith("browser.") && !["browser.navigate", "browser.wait"].includes(step.type) ? <input className="input" placeholder="Ekran seçicisi" value={step.parameters?.selector || ""} onChange={(event) => updateParameters(index, { selector: event.target.value })} /> : null}
                   {["browser.type", "desktop.type"].includes(step.type) ? (
@@ -595,14 +610,14 @@ function AutomationDraftPanel({
                 </div>
                 <label className="mt-4 flex items-center gap-3 rounded-md bg-amber-50 p-3 text-sm font-semibold text-amber-950 ring-1 ring-amber-200">
                   <input type="checkbox" checked={step.requiresApproval || step.type === "approval.wait"} disabled={step.type === "approval.wait"} onChange={(event) => updateStep(index, { requiresApproval: event.target.checked, approvalPrompt: event.target.checked ? step.approvalPrompt || `${step.title} çalışmadan önce onaylıyor musunuz?` : undefined })} />
-                  Bu adımdan önce teknik kullanıcıdan onay iste
+                  Bu adımdan önce benden onay iste
                 </label>
                 {step.requiresApproval || step.type === "approval.wait" ? <input className="input mt-2" value={step.approvalPrompt || ""} placeholder="Onay ekranında sorulacak soru" onChange={(event) => updateStep(index, { approvalPrompt: event.target.value })} /> : null}
               </div>
             ))}
           </div>
         </div>
-        <div className="space-y-5">
+        <div className={`space-y-5 ${mode === "advanced" ? "block" : "hidden"}`}>
           <div>
             <h3 className="font-bold">Alt Otomasyonlar</h3>
             <div className="mt-3 space-y-2">
@@ -631,28 +646,32 @@ function AutomationDraftPanel({
   );
 }
 
-function Hero({ data }: { data: SaasDashboard }) {
+function Hero({ data, mode }: { data: SaasDashboard; mode: "simple" | "advanced" }) {
+  const firstName = data.user.name.trim().split(/\s+/)[0];
+  const attentionCount = data.kpis.pendingApprovals + data.documents.filter((doc) => doc.status === "needs_review").length + data.jobs.filter((job) => job.status === "failed").length;
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-brand ring-1 ring-teal-100">
           <ShieldCheck size={14} />
-          Canlıya hazır uyum çekirdeği
+          {attentionCount ? `${attentionCount} konu sizi bekliyor` : "Her şey yolunda"}
         </div>
-        <h1 className="text-2xl font-bold tracking-normal">OtoFlow AI KOBİ RPA Platformu</h1>
+        <h1 className="text-2xl font-bold tracking-normal">{mode === "simple" ? `Merhaba ${firstName}` : "OtoFlow AI Operasyon Merkezi"}</h1>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
-          {data.organization.name} için bulut robotları, insan onayları, doküman işleme, fikir havuzu ve KVKK audit katmanı tek konsolda.
+          {mode === "simple" ? "Bugün yapmak istediğiniz işi seçin; OtoFlow gerekli adımlarda size yol gösterecek." : `${data.organization.name} otomasyon altyapısı, robot işleri, onaylar ve güvenlik kayıtları.`}
         </p>
       </div>
       <div className="rounded-lg border border-line bg-white p-4 text-sm">
-        <div className="font-semibold">{data.plan.name} Plan</div>
-        <div className="mt-1 text-muted">Manuel faturalama · {data.subscription.currentPeriodEnd} dönem sonu</div>
+        <div className="font-semibold">{data.organization.name}</div>
+        <div className="mt-1 text-muted">{data.plan.name} plan · {data.workflows.filter((workflow) => workflow.status === "published").length} hazır otomasyon</div>
       </div>
     </div>
   );
 }
 
-function Overview({ data, setTab }: { data: SaasDashboard; setTab: (tab: Tab) => void }) {
+function Overview({ data, mode, openTab }: { data: SaasDashboard; mode: "simple" | "advanced"; openTab: (tab: Tab) => void }) {
+  if (mode === "simple") return <SimpleOverview data={data} openTab={openTab} />;
+
   const cards = [
     { label: "Kazanılan Saat", value: `${formatNumber(data.kpis.savedHours)} saat`, icon: TimerReset },
     { label: "Robot Başarı", value: `%${data.kpis.successRate}`, icon: Gauge },
@@ -666,7 +685,7 @@ function Overview({ data, setTab }: { data: SaasDashboard; setTab: (tab: Tab) =>
         {cards.map((card) => {
           const Icon = card.icon;
           return (
-            <button key={card.label} onClick={() => card.label === "Bekleyen Onay" && setTab("approvals")} className="panel p-5 text-left">
+            <button key={card.label} onClick={() => card.label === "Bekleyen Onay" && openTab("approvals")} className="panel p-5 text-left">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-muted">{card.label}</div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-md bg-teal-50 text-brand">
@@ -699,6 +718,79 @@ function Overview({ data, setTab }: { data: SaasDashboard; setTab: (tab: Tab) =>
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+function SimpleOverview({ data, openTab }: { data: SaasDashboard; openTab: (tab: Tab) => void }) {
+  const actions = [
+    { title: "Ne istediğinizi yazın", text: "Yapılacak işi günlük dille anlatın.", icon: Sparkles, tab: "ai-builder" as Tab, tone: "bg-teal-50 text-brand" },
+    { title: "Yaptığınız işi gösterin", text: "Ekranda bir kez yapın, adımları kaydedelim.", icon: Radio, tab: "recorder" as Tab, tone: "bg-blue-50 text-blue-700" },
+    { title: "Hazır otomasyonu çalıştırın", text: "Daha önce hazırlanan işlerden birini seçin.", icon: Play, tab: "workflows" as Tab, tone: "bg-emerald-50 text-emerald-700" }
+  ];
+  const attentionItems = [
+    { label: "Onayınızı bekleyen işler", count: data.approvals.filter((task) => task.status === "pending").length, tab: "approvals" as Tab },
+    { label: "Kontrol edilmesi gereken belgeler", count: data.documents.filter((doc) => doc.status === "needs_review").length, tab: "documents" as Tab },
+    { label: "Tamamlanamayan otomasyonlar", count: data.jobs.filter((job) => job.status === "failed").length, tab: "jobs" as Tab }
+  ];
+  const setupItems = [
+    { label: "Bir uygulama hesabı bağlandı", complete: data.connectors.length > 0, tab: "connectors" as Tab },
+    { label: "İlk otomasyon hazırlandı", complete: data.workflows.length > 0, tab: "ai-builder" as Tab },
+    { label: "Bir otomasyon kullanıma açıldı", complete: data.workflows.some((workflow) => workflow.status === "published"), tab: "workflows" as Tab },
+    { label: "Bilgisayar ajanı bağlantısı kuruldu", complete: data.workers.some((worker) => worker.status !== "offline"), tab: "recorder" as Tab }
+  ];
+  const setupComplete = setupItems.filter((item) => item.complete).length;
+
+  return (
+    <div className="space-y-7">
+      <section>
+        <h2 className="section-title">Bugün ne yapmak istersiniz?</h2>
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            return <button key={action.title} className="panel group p-5 text-left transition hover:border-teal-300 hover:shadow-md" onClick={() => openTab(action.tab)}>
+              <div className={`flex h-11 w-11 items-center justify-center rounded-md ${action.tone}`}><Icon size={21} /></div>
+              <h3 className="mt-4 font-bold">{action.title}</h3>
+              <p className="mt-1 text-sm leading-6 text-muted">{action.text}</p>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-brand">Başla <ArrowRight size={15} /></span>
+            </button>;
+          })}
+        </div>
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <section className="panel overflow-hidden">
+          <TableHeader title="Sizi Bekleyenler" subtitle="Önce ilgilenmeniz gereken konular" />
+          <div className="divide-y divide-line">
+            {attentionItems.map((item) => <button key={item.label} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50" onClick={() => openTab(item.tab)}>
+              <span className="text-sm font-semibold">{item.label}</span>
+              <span className={`flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-sm font-bold ${item.count ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{item.count}</span>
+            </button>)}
+          </div>
+        </section>
+
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line p-5">
+            <div className="flex items-center justify-between"><h2 className="section-title">Başlangıç Durumu</h2><span className="text-sm font-semibold text-brand">{setupComplete}/{setupItems.length}</span></div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-brand" style={{ width: `${(setupComplete / setupItems.length) * 100}%` }} /></div>
+          </div>
+          <div className="divide-y divide-line">
+            {setupItems.map((item) => <button key={item.label} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50" onClick={() => openTab(item.tab)}>
+              <CheckCircle2 size={18} className={item.complete ? "text-emerald-600" : "text-slate-300"} />
+              <span className={`text-sm ${item.complete ? "text-muted line-through" : "font-semibold"}`}>{item.label}</span>
+            </button>)}
+          </div>
+        </section>
+      </div>
+
+      <section>
+        <h2 className="section-title">İşler nasıl gidiyor?</h2>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <Metric label="Başarı oranı" value={data.kpis.successRate} detail="Tamamlanan otomasyonların yüzdesi" suffix="%" />
+          <Metric label="Kazanılan zaman" value={data.kpis.savedHours} detail="Aylık tahmini zaman kazancı" suffix=" saat" />
+          <Metric label="Kullanıma hazır" value={data.workflows.filter((workflow) => workflow.status === "published").length} detail="Hemen çalıştırılabilecek otomasyon" />
+        </div>
+      </section>
     </div>
   );
 }
@@ -764,19 +856,19 @@ function Workflows({
           <div key={workflow.id} className="panel p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-xs font-semibold uppercase text-brand">{workflow.category} · {workflow.status}</div>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase text-brand"><span>{workflow.category}</span><StatusPill value={workflow.status} /></div>
                 <h2 className="mt-1 text-lg font-bold">{workflow.name}</h2>
                 <p className="mt-2 text-sm leading-6 text-muted">{workflow.description}</p>
               </div>
               <button className="icon-button shrink-0" title=".otomasyon indir" onClick={() => void exportFile(workflow)}><Download size={18} /></button>
             </div>
-            <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-muted ring-1 ring-line">Tetikleyici: {workflow.trigger}</div>
+            <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-muted ring-1 ring-line">Ne zaman çalışır: {workflow.trigger}</div>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <select className="input" value={credentialByWorkflow[workflow.id] || workflow.credentialId || ""} onChange={(event) => setCredentialByWorkflow((current) => ({ ...current, [workflow.id]: event.target.value }))}>
-                <option value="">Hesap profili yok</option>
+                <option value="">Hesap gerekmiyor</option>
                 {data.credentialProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.usernamePreview}</option>)}
               </select>
-              {workflow.status === "published" ? <button className="button-primary shrink-0" onClick={() => void runConfigured(workflow)}><Play size={16} />Çalıştır</button> : <button className="button-primary shrink-0" onClick={() => void activate(workflow)}><CheckCircle2 size={16} />Yayına Al</button>}
+              {workflow.status === "published" ? <button className="button-primary shrink-0" onClick={() => void runConfigured(workflow)}><Play size={16} />Çalıştır</button> : <button className="button-primary shrink-0" onClick={() => void activate(workflow)}><CheckCircle2 size={16} />Kullanıma Aç</button>}
             </div>
           </div>
         ))}
@@ -979,12 +1071,12 @@ function Documents({ data, refresh }: { data: SaasDashboard; refresh: () => Prom
               <div>
                 <h2 className="font-bold">{doc.name}</h2>
                 <div className="mt-1 text-sm text-muted">
-                  {doc.type} · {doc.status}
-                  {doc.source ? ` · ${doc.source}` : ""}
+                  {documentTypeLabel(doc.type)}
+                  {doc.source ? ` · ${documentSourceLabel(doc.source)}` : ""}
                   {doc.sizeBytes ? ` · ${Math.ceil(doc.sizeBytes / 1024)} KB` : ""}
                 </div>
               </div>
-              <div className="text-right"><FileSearch className="ml-auto text-brand" size={22} /><div className="mt-1 text-xs font-semibold text-muted">Ort. %{averageConfidence}</div></div>
+              <div className="text-right"><FileSearch className="ml-auto text-brand" size={22} /><div className="mt-1 text-xs font-semibold text-muted">Güven %{averageConfidence}</div><div className="mt-1"><StatusPill value={doc.status} /></div></div>
             </div>
             <div className="mt-4 space-y-2">
               {doc.fields.map((field) => (
@@ -1152,11 +1244,11 @@ function Compliance({ data, refresh }: { data: SaasDashboard; refresh: () => Pro
   );
 }
 
-function Metric({ label, value, detail }: { label: string; value: number; detail: string }) {
+function Metric({ label, value, detail, suffix = "" }: { label: string; value: number; detail: string; suffix?: string }) {
   return (
     <div className="panel p-5">
       <div className="text-sm font-medium text-muted">{label}</div>
-      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <div className="mt-2 text-2xl font-bold">{value}{suffix}</div>
       <div className="mt-1 text-xs text-muted">{detail}</div>
     </div>
   );
@@ -1198,6 +1290,14 @@ function TableHeader({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
+function documentTypeLabel(type: DocumentRecord["type"]) {
+  return ({ invoice: "Fatura", order: "Sipariş", customs: "Gümrük belgesi", reconciliation: "Mutabakat", other: "Diğer belge" } as const)[type];
+}
+
+function documentSourceLabel(source: NonNullable<DocumentRecord["source"]>) {
+  return ({ demo: "Örnek", upload: "Yüklenen dosya", email: "E-posta", connector: "Bağlı uygulama" } as const)[source];
+}
+
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<ReactNode>> }) {
   return (
     <div className="overflow-x-auto">
@@ -1219,10 +1319,43 @@ function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<Rea
 
 function StatusPill({ value }: { value: string }) {
   const tone = value.includes("pending") || value.includes("waiting") || value.includes("needs") || value === "queued" ? "bg-amber-100 text-amber-800 ring-amber-200" : value.includes("failed") || value.includes("rejected") || value.includes("cancelled") || value.includes("offline") ? "bg-red-100 text-red-800 ring-red-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200";
-  return <span className={`badge ${tone}`}>{value}</span>;
+  const labels: Record<string, string> = {
+    queued: "Sırada",
+    running: "Çalışıyor",
+    waiting_approval: "Onay bekliyor",
+    succeeded: "Tamamlandı",
+    failed: "Tamamlanamadı",
+    cancelled: "İptal edildi",
+    pending: "Bekliyor",
+    approved: "Onaylandı",
+    rejected: "Reddedildi",
+    needs_review: "Kontrol gerekiyor",
+    extracted: "Okundu",
+    draft: "Taslak",
+    published: "Kullanıma açık",
+    paused: "Durduruldu",
+    connected: "Bağlı",
+    needs_attention: "Kontrol gerekiyor",
+    disabled: "Kapalı",
+    idle: "Hazır",
+    offline: "Bağlantı yok",
+    local_agent_online: "Bilgisayar bağlı",
+    local_agent_offline: "Bilgisayar bağlantısı yok",
+    recording: "Adımlar kaydediliyor",
+    info: "Bilgi",
+    warn: "Uyarı",
+    error: "Hata",
+    fikir: "Fikir",
+    analiz: "İnceleniyor",
+    hazir: "Hazır",
+    canli: "Kullanımda",
+    beklemede: "Beklemede"
+  };
+  return <span className={`badge ${tone}`}>{labels[value] ?? value}</span>;
 }
 
 function RiskBadge({ value }: { value: string }) {
   const tone = value === "critical" || value === "high" ? "bg-red-100 text-red-800 ring-red-200" : value === "medium" ? "bg-amber-100 text-amber-800 ring-amber-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200";
-  return <span className={`badge ${tone}`}>{value}</span>;
+  const labels: Record<string, string> = { critical: "Çok yüksek risk", high: "Yüksek risk", medium: "Orta risk", low: "Düşük risk" };
+  return <span className={`badge ${tone}`}>{labels[value] ?? value}</span>;
 }

@@ -1,24 +1,28 @@
-import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, ShieldCheck, Sparkles, Workflow } from "lucide-react";
+import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, Settings2, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { useExperienceMode } from "./ExperienceMode";
 
 const links = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/ai-builder", label: "AI ile Hazırla", icon: Sparkles },
-  { to: "/recorder", label: "Recorder Studio", icon: Radio },
-  { to: "/workflows", label: "Otomasyonlar", icon: Workflow },
-  { to: "/jobs", label: "Orchestrator", icon: Bot },
-  { to: "/approvals", label: "Action Center", icon: Inbox },
-  { to: "/documents", label: "IDP Dokümanlar", icon: FileSearch },
-  { to: "/opportunities", label: "Automation Hub", icon: Lightbulb },
-  { to: "/connectors", label: "Entegrasyonlar", icon: KeyRound },
-  { to: "/compliance", label: "Uyum", icon: ShieldCheck }
+  { to: "/dashboard", label: "Ana Sayfa", icon: LayoutDashboard },
+  { to: "/ai-builder", label: "Yazarak Otomasyon", icon: Sparkles },
+  { to: "/recorder", label: "Göstererek Otomasyon", icon: Radio },
+  { to: "/workflows", label: "Otomasyonlarım", icon: Workflow },
+  { to: "/approvals", label: "Onay Bekleyenler", icon: Inbox },
+  { to: "/documents", label: "Belgeler", icon: FileSearch },
+  { to: "/connectors", label: "Hesaplar ve Bağlantılar", icon: KeyRound },
+  { to: "/jobs", label: "İş ve Robot Takibi", icon: Bot, advancedOnly: true },
+  { to: "/opportunities", label: "Fikirler ve Kazanç", icon: Lightbulb, advancedOnly: true },
+  { to: "/compliance", label: "Güvenlik ve Kayıtlar", icon: ShieldCheck, advancedOnly: true }
 ];
 
 export function AppLayout() {
   const [pending, setPending] = useState(0);
   const location = useLocation();
+  const { mode, setMode } = useExperienceMode();
+  const visibleLinks = links.filter((link) => mode === "advanced" || !link.advancedOnly);
+  const mobileLinks = links.filter((link) => ["/dashboard", "/ai-builder", "/workflows", "/approvals", "/documents"].includes(link.to));
 
   useEffect(() => {
     api.dashboard().then((payload) => {
@@ -39,7 +43,7 @@ export function AppLayout() {
           </div>
         </div>
         <nav className="space-y-1 px-3 py-4">
-          {links.map((link) => {
+          {visibleLinks.map((link) => {
             const Icon = link.icon;
             return (
               <NavLink
@@ -53,12 +57,12 @@ export function AppLayout() {
             );
           })}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 border-t border-line p-4 text-sm text-muted">
+        <div className="absolute bottom-0 left-0 right-0 border-t border-line bg-white p-4 text-sm text-muted">
           <div className="flex items-center gap-2 font-medium text-ink">
             <ShieldCheck size={17} className="text-brand" />
             Uyum katmanı aktif
           </div>
-          <p className="mt-2 leading-5">Riskli robot adımları onay kapısı ve audit izi olmadan çalışmaz.</p>
+          <p className="mt-2 leading-5">{mode === "simple" ? "Yalnızca günlük kullanımda gereken ekranlar açık." : "Teknik izleme ve yönetim ekranları açık."}</p>
         </div>
       </aside>
 
@@ -67,11 +71,15 @@ export function AppLayout() {
           <div className="flex min-w-0 items-center gap-3">
             <Route className="hidden text-brand sm:block" size={20} />
             <div>
-              <div className="text-sm font-semibold text-ink">KOBİ Hyperautomation Konsolu</div>
-              <div className="hidden text-xs text-muted sm:block">Robotlar, onaylar, dokümanlar ve uyum</div>
+              <div className="text-sm font-semibold text-ink">OtoFlow Çalışma Alanı</div>
+              <div className="hidden text-xs text-muted sm:block">Otomasyonlarınız ve bekleyen işleriniz</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <div className="inline-flex rounded-md border border-line bg-slate-50 p-1" aria-label="Görünüm seçimi">
+              <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "simple" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("simple")} aria-pressed={mode === "simple"}>Sade</button>
+              <button className={`min-h-8 rounded px-2 text-xs font-semibold sm:px-3 ${mode === "advanced" ? "bg-white text-brand shadow-sm" : "text-muted"}`} onClick={() => setMode("advanced")} aria-pressed={mode === "advanced"}><Settings2 className="mr-1 inline" size={13} />Gelişmiş</button>
+            </div>
             <div className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200 md:block">
               E-imza/PIN saklama kapalı
             </div>
@@ -81,10 +89,20 @@ export function AppLayout() {
             </button>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8">
+        <main className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 md:px-8 lg:pb-6">
           <Outlet />
         </main>
       </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-white px-1 pb-[max(6px,env(safe-area-inset-bottom))] pt-1 lg:hidden" aria-label="Temel menü">
+        {mobileLinks.map((link) => {
+          const Icon = link.icon;
+          return <NavLink key={link.to} to={link.to} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-1 rounded text-[10px] font-semibold ${isActive ? "text-brand" : "text-muted"}`}>
+            <Icon size={19} />
+            <span className="max-w-full truncate px-1">{link.to === "/ai-builder" ? "Oluştur" : link.to === "/workflows" ? "Otomasyon" : link.to === "/approvals" ? "Onaylar" : link.label}</span>
+          </NavLink>;
+        })}
+      </nav>
     </div>
   );
 }

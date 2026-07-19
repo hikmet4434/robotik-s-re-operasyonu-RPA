@@ -8,12 +8,13 @@ import { ValidatePage } from "./pages/ValidatePage";
 import { TaxPage } from "./pages/TaxPage";
 import { SubmitPage } from "./pages/SubmitPage";
 import { FileDetailPage } from "./pages/FileDetailPage";
+import { ExperienceModeProvider } from "./ui/ExperienceMode";
 import "./styles.css";
 
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <AppLayout />,
+    element: <ExperienceModeProvider><AppLayout /></ExperienceModeProvider>,
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: "dashboard", element: <DashboardPage /> },

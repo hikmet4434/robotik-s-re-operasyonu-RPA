@@ -2,10 +2,12 @@ import { CalendarDays, CheckCircle2, FolderOpen, Play, Save, ShieldCheck, Sparkl
 import { useEffect, useMemo, useState } from "react";
 import type { AiAutomationPlan, AiRuntimeStatus, Workflow } from "../../shared/saasTypes";
 import { api } from "../api";
+import { useExperienceMode } from "../ui/ExperienceMode";
 
 const dayNames = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
 
 export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: () => Promise<void> }) {
+  const { mode } = useExperienceMode();
   const [aiStatus, setAiStatus] = useState<AiRuntimeStatus | null>(null);
   const [prompt, setPrompt] = useState("Bütün dosyalarımı haftada bir incele. Son bir haftada yeni gelen ve değişen dosyaları özetle, günlere göre neler yaptığımı raporla. Her pazartesi saat 09:00'da raporu hazırla.");
   const [directoryPath, setDirectoryPath] = useState("/Users/ht44/Documents");
@@ -71,9 +73,9 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
       const workflow = await api.createAiWorkflow(plan);
       if (runNow) await api.runWorkflow(workflow.id, "AI ile hazırlanan workflow ilk çalıştırması");
       await refreshDashboard();
-      setMessage(runNow ? "Workflow kaydedildi ve yerel ajan kuyruğunda çalışmaya başladı." : "Workflow kaydedildi; takvimi geldiğinde otomatik çalışacak.");
+      setMessage(runNow ? "Otomasyon kaydedildi ve çalışmaya başladı." : "Otomasyon kaydedildi; belirlediğiniz zamanda otomatik çalışacak.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Workflow kaydedilemedi.");
+      setMessage(error instanceof Error ? error.message : "Otomasyon kaydedilemedi.");
     } finally {
       setBusy(false);
     }
@@ -84,15 +86,16 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
       <section className="panel p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-brand"><Sparkles size={17} /> AI ile Otomasyon Hazırla</div>
-            <h2 className="text-xl font-bold">Doğal dilden çalıştırılabilir workflow</h2>
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-brand"><Sparkles size={17} /> Yazarak Otomasyon Oluştur</div>
+            <h2 className="text-xl font-bold">Ne yapılmasını istiyorsunuz?</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">İşi bir çalışma arkadaşınıza anlatır gibi yazın. Zamanlama ve onay adımlarını birlikte hazırlayacağız.</p>
           </div>
           <div className="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
-            <ShieldCheck size={16} /> {aiStatus?.mode === "openrouter_fallback" ? `${aiStatus.modelCount} modelli otomatik fallback aktif` : "Yerel planlayıcı aktif"}
+            <ShieldCheck size={16} /> {mode === "advanced" && aiStatus?.mode === "openrouter_fallback" ? `${aiStatus.modelCount} yedekli AI modeli hazır` : "AI hazır ve güvenli"}
           </div>
         </div>
 
-        <label className="mt-5 block text-sm font-semibold">Yapılacak işi tarif et
+        <label className="mt-5 block text-sm font-semibold">Yapılacak işi anlatın
           <textarea className="input mt-2 min-h-56 resize-y leading-6" value={prompt} onChange={(event) => setPrompt(event.target.value)} />
         </label>
       </section>
@@ -117,7 +120,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
             Rapor kaydında onay iste
           </label>
         </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className={`mt-4 gap-4 lg:grid-cols-2 ${mode === "advanced" ? "grid" : "hidden"}`}>
           <label className="block text-sm font-semibold"><FolderOpen className="mr-2 inline text-brand" size={16} />Taranacak klasör
             <input className="input mt-2" value={directoryPath} onChange={(event) => setDirectoryPath(event.target.value)} />
           </label>
@@ -126,7 +129,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
           </label>
         </div>
         <button className="button-primary mt-5" disabled={busy || prompt.trim().length < 12} onClick={() => void generatePlan()}>
-          <Sparkles size={16} /> {busy ? "Hazırlanıyor..." : "AI Taslağını Hazırla"}
+          <Sparkles size={16} /> {busy ? "Hazırlanıyor..." : "Otomasyonu Hazırla"}
         </button>
         {message ? <div className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-900 ring-1 ring-blue-100">{message}</div> : null}
       </section>
@@ -138,11 +141,11 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
               <div className="min-w-0 flex-1">
                 <input className="input text-base font-bold" value={plan.name} onChange={(event) => setPlan({ ...plan, name: event.target.value })} />
                 <textarea className="input mt-3 min-h-20" value={plan.description} onChange={(event) => setPlan({ ...plan, description: event.target.value })} />
-                <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-muted"><span>{plan.providerLabel}</span><span>·</span><span>{plan.schedule.label}</span><span>·</span><span>{plan.steps.length} adım</span></div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-muted">{mode === "advanced" ? <><span>{plan.providerLabel}</span><span>·</span></> : null}<span>{plan.schedule.label}</span><span>·</span><span>{plan.steps.length} adım</span></div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="button-secondary" disabled={busy} onClick={() => void saveWorkflow(false)}><Save size={16} /> Workflow'u Kaydet</button>
-                <button className="button-primary" disabled={busy} onClick={() => void saveWorkflow(true)}><Play size={16} /> Kaydet ve Çalıştır</button>
+                <button className="button-secondary" disabled={busy} onClick={() => void saveWorkflow(false)}><Save size={16} /> Daha Sonra Kullan</button>
+                <button className="button-primary" disabled={busy} onClick={() => void saveWorkflow(true)}><Play size={16} /> Kaydet ve Şimdi Çalıştır</button>
               </div>
             </div>
           </div>
@@ -151,7 +154,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
               <div key={step.id} className="grid gap-3 p-4 md:grid-cols-[40px_1fr_auto] md:items-center">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-sm font-bold text-muted">{index + 1}</div>
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{step.title}</span><span className="rounded bg-slate-100 px-2 py-1 font-mono text-[11px] text-muted">{step.type}</span></div>
+                  <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{step.title}</span>{mode === "advanced" ? <span className="rounded bg-slate-100 px-2 py-1 font-mono text-[11px] text-muted">{step.type}</span> : null}</div>
                   <p className="mt-1 text-sm text-muted">{step.description}</p>
                 </div>
                 <label className="flex min-h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-semibold">
@@ -161,7 +164,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
             ))}
           </div>
           <div className="border-t border-line bg-emerald-50 p-4 text-sm text-emerald-900">
-            <CheckCircle2 className="mr-2 inline" size={16} /> Şifreler ve LLM anahtarı workflow adımlarına veya .otomasyon paketine eklenmez.
+            <CheckCircle2 className="mr-2 inline" size={16} /> Hesap şifreleri otomasyona eklenmez; güvenli kasadan yalnızca gerektiğinde kullanılır.
           </div>
         </section>
       ) : null}
