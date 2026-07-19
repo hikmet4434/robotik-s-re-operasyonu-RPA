@@ -21,6 +21,12 @@ npm run setup:agent
 npm run dev:all
 ```
 
+macOS'ta sunucu ve Bilgisayar Ajanı'nın oturum açılışında otomatik başlaması için bir kez çalıştırın:
+
+```bash
+npm run install:mac-runtime
+```
+
 Uygulama:
 
 ```text
@@ -50,6 +56,8 @@ npm start
 ```
 
 macOS ilk kullanımda Terminal/Node için **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** izni ister. Ekran videosu kaydında tarayıcının **Ekran ve Sistem Sesi Kaydı** izni gerekir.
+
+Dosya otomasyonlarında varsayılan izinli alanlar `~/Documents`, `~/Downloads` ve `~/Desktop` klasörleridir. Haftalık dosya raporu bu üç alanı birlikte tarar; `.git`, `node_modules`, derleme çıktıları ve tarayıcı önbellekleri otomatik olarak atlanır.
 
 ## Gerçek Çalışma Döngüsü
 
@@ -93,7 +101,7 @@ Docker Compose deploy için:
 docker-compose.coolify.yml
 ```
 
-Coolify Environment Variables alanında `OPENROUTER_API_KEY` secret olarak tanımlanır. Model seçimi son kullanıcı ekranında gösterilmez; sunucu şu sırayla otomatik fallback uygular:
+Coolify Environment Variables alanında `OPENROUTER_API_KEY` ve güçlü, rastgele bir `OTOFLOW_AGENT_TOKEN` secret olarak tanımlanır. Mac'teki Yerel Ajan aynı `OTOFLOW_AGENT_TOKEN` değerini ve Coolify uygulamasının HTTPS adresini `OTOFLOW_API_BASE` olarak kullanmalıdır. Model seçimi son kullanıcı ekranında gösterilmez; sunucu şu sırayla otomatik fallback uygular:
 
 1. `OPENROUTER_MODEL_PRIMARY=z-ai/glm-5.2`
 2. `OPENROUTER_MODEL_FALLBACK_1=moonshotai/kimi-k3`

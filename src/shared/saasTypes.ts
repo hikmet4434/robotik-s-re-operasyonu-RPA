@@ -205,6 +205,7 @@ export interface WorkflowStep {
     credentialField?: "username" | "password";
     outputKey?: string;
     directoryPath?: string;
+    directoryPaths?: string[];
     reportPath?: string;
     lookbackDays?: number;
     extensions?: string[];

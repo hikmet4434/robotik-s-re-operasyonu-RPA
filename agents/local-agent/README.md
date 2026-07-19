@@ -26,4 +26,15 @@ OTOFLOW_RECORDING_SESSION_ID=rec_xxxxx npm run demo:event
 
 `OTOFLOW_AGENT_TOKEN` sunucudaki değerle aynı olmalıdır. Üretimde varsayılan geliştirme anahtarını kullanmayın.
 
+Canlı Coolify sunucusuna bağlanma örneği:
+
+```bash
+OTOFLOW_API_BASE=https://rpa.example.com \
+OTOFLOW_AGENT_TOKEN=strong-shared-secret \
+OTOFLOW_ALLOWED_PATHS="$HOME/Documents,$HOME/Downloads,$HOME/Desktop" \
+npm start
+```
+
+Haftalık dosya otomasyonu bu üç klasörü birlikte tarar. Proje bağımlılıkları, derleme klasörleri ve tarayıcı önbellekleri rapora alınmaz.
+
 macOS tıklama/yazma ve kayıt işlemleri için Terminal veya Node uygulamasına Erişilebilirlik izni verin.

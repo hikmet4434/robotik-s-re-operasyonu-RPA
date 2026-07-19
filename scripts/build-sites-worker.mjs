@@ -259,8 +259,9 @@ function advanceCloudJobs(state) {
 }
 
 function buildAiFilePlan(body) {
-  const directoryPath = body.directoryPath || "/Users/kullanici/Documents";
-  const reportPath = body.reportPath || "/Users/kullanici/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.md";
+  const directoryPaths = Array.isArray(body.directoryPaths) && body.directoryPaths.length ? body.directoryPaths : [body.directoryPath || "~/Documents", "~/Downloads", "~/Desktop"];
+  const directoryPath = directoryPaths[0];
+  const reportPath = body.reportPath || "~/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.md";
   const schedule = {
     enabled: Boolean(body.cron),
     cron: body.cron || "0 9 * * 1",
@@ -279,13 +280,13 @@ function buildAiFilePlan(body) {
     source: "template",
     schedule,
     steps: [
-      step("files.scan", "Yeni ve degisen dosyalari tara", "Izin verilen klasorde son yedi gunde eklenen veya degistirilen dosyalari listeler.", "low", { directoryPath, lookbackDays: 7, recursive: true, maxFiles: 500, outputKey: "weeklyFiles" }),
+      step("files.scan", "Yeni ve degisen dosyalari tara", "Belgeler, Indirilenler ve Masaustu icinde son yedi gunde eklenen veya degistirilen dosyalari listeler.", "low", { directoryPath, directoryPaths, lookbackDays: 7, recursive: true, maxFiles: 1000, outputKey: "weeklyFiles" }),
       step("files.summarize", "Dosya iceriklerini ozetle", "Metin tabanli dosyalari icerigiyle, diger dosyalari metadata ile ozetler.", "medium", { outputKey: "fileSummaries", prompt: "Dosyalari kisa Turkce maddelerle ozetle." }),
       step("activity.summarize", "Haftalik calismayi gunlere ayir", "Dosya hareketlerini gun ve dosya turune gore gruplar.", "low", { outputKey: "weeklyActivity" }),
       step("report.compose", "Haftalik raporu hazirla", "Dosya ve aktivite ozetini tek raporda birlestirir.", "low", { outputKey: "weeklyReport", reportTitle: "Haftalik Dosya ve Calisma Ozeti" }),
       step("report.save", "Raporu bilgisayara kaydet", "Raporu izin verilen hedefe kaydeder.", body.approvalAtEnd ? "medium" : "low", { reportPath, outputKey: "savedReport" }, Boolean(body.approvalAtEnd)),
     ],
-    assumptions: ["Taranacak klasor: " + directoryPath, "Rapor hedefi: " + reportPath, "Bulut onizlemesi dosya islemlerini simule eder; yerel ajan bilgisayardaki izinli klasorlerde gercekten calisir."],
+    assumptions: ["Taranacak klasorler: " + directoryPaths.join(", "), "Rapor hedefi: " + reportPath, "Gercek dosya islemleri ayni sunucuya bagli yerel ajan tarafindan calistirilir."],
     providerLabel: "Yerel guvenli planlayici",
   };
 }

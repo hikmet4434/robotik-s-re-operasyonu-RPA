@@ -144,6 +144,7 @@ const workflowStepSchema = z.object({
     credentialField: z.enum(["username", "password"]).optional(),
     outputKey: z.string().max(160).optional()
     , directoryPath: z.string().max(2048).optional()
+    , directoryPaths: z.array(z.string().max(2048)).min(1).max(10).optional()
     , reportPath: z.string().max(2048).optional()
     , lookbackDays: z.number().int().min(1).max(365).optional()
     , extensions: z.array(z.string().max(20)).max(50).optional()
@@ -456,6 +457,7 @@ app.post("/api/ai/automation-plan", async (req, res) => {
   const schema = z.object({
     prompt: z.string().min(12).max(8000),
     directoryPath: z.string().max(2048).optional(),
+    directoryPaths: z.array(z.string().max(2048)).min(1).max(10).optional(),
     reportPath: z.string().max(2048).optional(),
     cron: z.string().min(5).max(120).optional(),
     timezone: z.string().min(3).max(80).optional(),

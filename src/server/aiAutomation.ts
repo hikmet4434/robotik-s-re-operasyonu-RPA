@@ -10,6 +10,7 @@ import type { AiAutomationPlan, AiSettings, WorkflowStep, WorkflowStepType } fro
 export interface AiPlanRequest {
   prompt: string;
   directoryPath?: string;
+  directoryPaths?: string[];
   reportPath?: string;
   cron?: string;
   timezone?: string;
@@ -284,7 +285,7 @@ export function normalizeGeneratedPlan(raw: unknown, input: AiPlanRequest): Gene
 
 const allowedParameterKeys = new Set([
   "url", "selector", "value", "option", "appName", "x", "y", "keys", "timeoutMs", "credentialField",
-  "outputKey", "directoryPath", "reportPath", "lookbackDays", "extensions", "recursive", "maxFiles", "prompt", "reportTitle"
+  "outputKey", "directoryPath", "directoryPaths", "reportPath", "lookbackDays", "extensions", "recursive", "maxFiles", "prompt", "reportTitle"
 ]);
 
 function stepId() {
@@ -349,15 +350,21 @@ export async function extractDocumentTextWithGlmOcr(
   return { text: parsed.data.md_results, model, providerLabel: `Z.AI · ${model}` };
 }
 
+function requestedDirectoryPaths(input: AiPlanRequest) {
+  if (input.directoryPaths?.length) return [...new Set(input.directoryPaths.map((value) => value.trim()).filter(Boolean))];
+  if (input.directoryPath?.trim()) return [input.directoryPath.trim()];
+  return ["Documents", "Downloads", "Desktop"].map((folder) => path.join(os.homedir(), folder));
+}
+
 function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
-  const directoryPath = input.directoryPath || path.join(os.homedir(), "Documents");
+  const directoryPaths = requestedDirectoryPaths(input);
   const reportPath = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "haftalik-dosya-raporu.md");
   const steps: WorkflowStep[] = [
     {
       id: stepId(), type: "files.scan", title: "Yeni ve değişen dosyaları tara",
-      description: "İzin verilen klasörde son yedi günde eklenen veya değiştirilen dosyaları güvenli sınırlar içinde listeler.",
+      description: "Belgeler, İndirilenler ve Masaüstü içinde son yedi günde eklenen veya değiştirilen dosyaları güvenli sınırlar içinde listeler.",
       requiresApproval: false, riskLevel: "low",
-      parameters: { directoryPath, lookbackDays: 7, recursive: true, maxFiles: 500, outputKey: "weeklyFiles" }
+      parameters: { directoryPath: directoryPaths[0], directoryPaths, lookbackDays: 7, recursive: true, maxFiles: 1000, outputKey: "weeklyFiles" }
     },
     {
       id: stepId(), type: "files.summarize", title: "Dosya içeriklerini özetle",
@@ -399,7 +406,7 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
     },
     steps,
     assumptions: [
-      `Taranacak klasör: ${directoryPath}`,
+      `Taranacak klasörler: ${directoryPaths.join(", ")}`,
       `Rapor hedefi: ${reportPath}`,
       "Metin dışı dosyalarda içerik yerine dosya adı, boyut ve değişiklik zamanı raporlanır."
     ],
@@ -408,7 +415,7 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
 }
 
 function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
-  const defaultDirectory = input.directoryPath || path.join(os.homedir(), "Documents");
+  const directoryPaths = requestedDirectoryPaths(input);
   const defaultReport = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "otomasyon-raporu.md");
   plan.schedule = {
     enabled: Boolean(input.cron),
@@ -419,7 +426,10 @@ function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
   plan.trigger = plan.schedule.enabled ? plan.schedule.label : "Manuel başlat";
   plan.steps = plan.steps.map((step) => {
     const parameters = { ...step.parameters };
-    if (step.type === "files.scan") parameters.directoryPath = defaultDirectory;
+    if (step.type === "files.scan") {
+      parameters.directoryPath = directoryPaths[0];
+      parameters.directoryPaths = directoryPaths;
+    }
     if (step.type === "report.save") parameters.reportPath = defaultReport;
     const externalAction = ["email.send_after_approval", "webhook.emit"].includes(step.type) || step.riskLevel === "critical";
     return {
@@ -456,7 +466,7 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
         "parameterJson alanına yalnızca geçerli JSON nesnesi yaz. Dosya raporu için files.scan, files.summarize, activity.summarize, report.compose ve report.save adımlarını sırala.",
         "Başlıkları ve açıklamaları Türkçe yaz. Ekran kaydı gerektirmeyen çalıştırılabilir bir taslak üret."
       ].join("\n"),
-      prompt: `Kullanıcı talebi:\n${input.prompt}\n\nTakvim: ${input.scheduleLabel || "Manuel"}\nKlasör: ${input.directoryPath || "Kullanıcı seçecek"}\nRapor hedefi: ${input.reportPath || "Kullanıcı seçecek"}`
+      prompt: `Kullanıcı talebi:\n${input.prompt}\n\nTakvim: ${input.scheduleLabel || "Manuel"}\nKlasörler: ${requestedDirectoryPaths(input).join(", ")}\nRapor hedefi: ${input.reportPath || "Kullanıcı seçecek"}`
     });
     return normalizeGeneratedPlan(result.output, input);
   });

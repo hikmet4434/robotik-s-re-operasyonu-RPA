@@ -737,7 +737,7 @@ function SimpleOverview({ data, openTab }: { data: SaasDashboard; openTab: (tab:
     { label: "Bir uygulama hesabı bağlandı", complete: data.connectors.length > 0, tab: "connectors" as Tab },
     { label: "İlk otomasyon hazırlandı", complete: data.workflows.length > 0, tab: "ai-builder" as Tab },
     { label: "Bir otomasyon kullanıma açıldı", complete: data.workflows.some((workflow) => workflow.status === "published"), tab: "workflows" as Tab },
-    { label: "Bilgisayar ajanı bağlantısı kuruldu", complete: data.workers.some((worker) => worker.status !== "offline"), tab: "recorder" as Tab }
+    { label: "Bilgisayar ajanı bağlantısı kuruldu", complete: data.workers.some((worker) => worker.runtime === "local" && worker.status !== "offline"), tab: "recorder" as Tab }
   ];
   const setupComplete = setupItems.filter((item) => item.complete).length;
 
@@ -971,6 +971,8 @@ type FriendlyJobResult = {
   details?: string[];
   generatedAt?: string;
   source?: string;
+  reportContent?: string;
+  reportPath?: string;
 };
 
 function friendlyJobResult(job: Job): FriendlyJobResult | null {
@@ -1005,6 +1007,7 @@ function JobResultPanel({ job, onDownload }: { job: Job; onDownload: () => void 
           <div className={`px-5 py-4 text-sm leading-6 ${result.status === "agent_required" || job.status === "failed" ? "bg-red-50 text-red-900" : "bg-teal-50 text-teal-950"}`}>{result.summary}</div>
           {result.metrics?.length ? <div className="grid border-y border-line sm:grid-cols-3">{result.metrics.map((metric) => <div key={metric.label} className="border-b border-line px-5 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"><div className="text-xs font-semibold uppercase text-muted">{metric.label}</div><div className="mt-1 text-xl font-bold text-ink">{metric.value}</div></div>)}</div> : null}
           {result.details?.length ? <div className="px-5 py-4"><h3 className="text-sm font-bold">Üretilen sonuçlar</h3><div className="mt-3 divide-y divide-line border-y border-line">{result.details.filter(Boolean).map((detail, index) => <div key={`${index}-${detail}`} className="py-3 text-sm leading-6 text-ink">{detail}</div>)}</div></div> : null}
+          {result.reportContent ? <div className="border-t border-line px-5 py-4"><h3 className="text-sm font-bold">Hazırlanan rapor</h3>{result.reportPath ? <div className="mt-1 break-all text-xs text-muted">{result.reportPath}</div> : null}<pre className="mt-3 max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-sm leading-6 text-ink ring-1 ring-line">{result.reportContent}</pre></div> : null}
           {result.generatedAt ? <div className="border-t border-line px-5 py-3 text-xs text-muted">Tamamlanma: {formatDate(result.generatedAt)}</div> : null}
         </div>
       ) : (

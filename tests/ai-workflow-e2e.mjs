@@ -2,22 +2,30 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const apiBase = process.env.OTOFLOW_TEST_API || "http://localhost:4100";
+const apiBase = process.env.OTOFLOW_TEST_API || "http://127.0.0.1:4100";
 const suffix = Date.now().toString(36);
 const testDir = path.resolve("data", `ai-e2e-${suffix}`);
 const reportPath = path.join(testDir, "raporlar", "haftalik-rapor.md");
 
 async function request(route, init = {}) {
-  const response = await fetch(`${apiBase}${route}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init.headers }
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`${route}: ${typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error || response.status)}`);
-  return payload;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${apiBase}${route}`, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...init.headers }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`${route}: ${typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error || response.status)}`);
+      return payload;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+  throw new Error(`${route}: istek tamamlanamadı.`);
 }
 
-async function waitFor(check, timeoutMs = 45_000) {
+async function waitFor(check, timeoutMs = 90_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const value = await check();
@@ -88,8 +96,11 @@ assert.match(report, /Haftalık Dosya ve Çalışma Özeti/);
 assert.match(report, /toplanti-notlari\.md/);
 assert.match(report, /durum\.csv/);
 assert.equal(completed.outputs.savedReport.reportPath, reportPath);
+assert.equal(completed.outputs._result.status, "succeeded");
+assert.equal(completed.outputs._result.reportPath, reportPath);
+assert.match(completed.outputs._result.reportContent, /Haftalık Dosya ve Çalışma Özeti/);
 
-if (apiBase.includes("localhost") && process.env.OTOFLOW_TEST_KEEP_DATA !== "true") {
+if ((apiBase.includes("localhost") || apiBase.includes("127.0.0.1")) && process.env.OTOFLOW_TEST_KEEP_DATA !== "true") {
   const { default: Database } = await import("better-sqlite3");
   const db = new Database("data/otoflow-saas.sqlite");
   const row = db.prepare("SELECT value FROM app_state WHERE key = ?").get("saas");

@@ -459,6 +459,10 @@ function normalizeState(state: SaasState): SaasState {
     changed = true;
   }
   for (const job of state.jobs) {
+    if (job.status === "succeeded" && job.lastError) {
+      job.lastError = undefined;
+      changed = true;
+    }
     if (typeof job.currentStepIndex !== "number") {
       job.currentStepIndex = job.status === "succeeded" ? 1 : 0;
       changed = true;
@@ -1127,6 +1131,7 @@ function queueJobAtCurrentStep(state: SaasState, job: Job, workflow: Workflow, s
     job.status = "succeeded";
     job.completedAt = now();
     job.leaseExpiresAt = undefined;
+    job.outputs = { ...(job.outputs || {}), _result: buildCompletedJobResult(job, workflow) };
     syncQueueItem(state, job);
     state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: "Workflow bütün adımlarıyla başarıyla tamamlandı." });
     return;
@@ -1161,6 +1166,45 @@ function queueJobAtCurrentStep(state: SaasState, job: Job, workflow: Workflow, s
     job.status = "queued";
   }
   syncQueueItem(state, job);
+}
+
+function buildCompletedJobResult(job: Job, workflow: Workflow) {
+  const outputs = job.outputs || {};
+  const scan = asOutputRecord(outputs.weeklyFiles) || Object.values(outputs).map(asOutputRecord).find((value) => Array.isArray(value?.files));
+  const activity = asOutputRecord(outputs.weeklyActivity) || Object.values(outputs).map(asOutputRecord).find((value) => value?.byDay && value?.byExtension);
+  const saved = asOutputRecord(outputs.savedReport) || Object.values(outputs).map(asOutputRecord).find((value) => typeof value?.reportPath === "string");
+  const reportContent = typeof outputs.weeklyReport === "string"
+    ? outputs.weeklyReport
+    : Object.values(outputs).find((value) => typeof value === "string" && value.startsWith("# "));
+  const fileCount = Array.isArray(scan?.files) ? scan.files.length : typeof activity?.totalFiles === "number" ? activity.totalFiles : undefined;
+  const dayCount = activity?.byDay && typeof activity.byDay === "object" ? Object.keys(activity.byDay).length : undefined;
+  const reportPath = typeof saved?.reportPath === "string" ? saved.reportPath : undefined;
+
+  return {
+    status: "succeeded",
+    title: workflow.name,
+    summary: fileCount === undefined
+      ? "Otomasyon bütün adımlarını tamamladı ve sonuçlarını kaydetti."
+      : `${fileCount} yeni veya değişen dosya incelendi${reportPath ? "; haftalık rapor bilgisayara kaydedildi." : "."}`,
+    metrics: [
+      fileCount === undefined ? undefined : { label: "İncelenen dosya", value: String(fileCount) },
+      dayCount === undefined ? undefined : { label: "Hareket olan gün", value: String(dayCount) },
+      { label: "Tamamlanan adım", value: `${job.totalSteps}/${job.totalSteps}` }
+    ].filter(Boolean),
+    details: [
+      reportPath ? `Rapor konumu: ${reportPath}` : undefined,
+      scan?.maxFilesReached ? "Güvenli tarama sınırına ulaşıldı; en yeni dosyalar rapora alındı." : undefined,
+      typeof activity?.inaccessibleCount === "number" && activity.inaccessibleCount > 0 ? `${activity.inaccessibleCount} korumalı klasör atlandı.` : undefined
+    ].filter(Boolean),
+    reportContent: typeof reportContent === "string" ? reportContent : undefined,
+    reportPath,
+    generatedAt: job.completedAt,
+    source: "OtoFlow Bilgisayar Ajanı"
+  };
+}
+
+function asOutputRecord(value: unknown): Record<string, any> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : undefined;
 }
 
 function syncQueueItem(state: SaasState, job: Job) {
@@ -1213,7 +1257,8 @@ export function leaseNextAgentStep(): AgentStepLease | null {
   job.status = "running";
   job.workerId = LOCAL_WORKER_ID;
   job.startedAt ||= now();
-  job.leaseExpiresAt = new Date(Date.now() + 90_000).toISOString();
+  const leaseDurationMs = step.type.startsWith("files.") || step.type.startsWith("activity.") || step.type.startsWith("report.") ? 5 * 60_000 : 90_000;
+  job.leaseExpiresAt = new Date(Date.now() + leaseDurationMs).toISOString();
   syncQueueItem(state, job);
   const worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
   if (worker) {
@@ -1238,6 +1283,7 @@ export function completeAgentStep(input: { jobId: string; stepIndex: number; sum
   if (outputKey && input.output !== undefined) job.outputs = { ...(job.outputs || {}), [outputKey]: input.output };
   job.currentStepIndex += 1;
   job.retryCount = 0;
+  job.lastError = undefined;
   job.leaseExpiresAt = undefined;
   state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${completedTitle} tamamlandı${input.summary ? `: ${sanitizeLog(input.summary)}` : "."}` });
   queueJobAtCurrentStep(state, job, workflow, version.steps, input.summary || completedTitle);

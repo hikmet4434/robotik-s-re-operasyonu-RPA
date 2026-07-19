@@ -87,7 +87,7 @@ export const api = {
   aiStatus: () => request<AiRuntimeStatus>("/api/ai/status"),
   saveAiSettings: (body: { provider: AiSettings["provider"]; model: string; baseUrl: string; apiKey?: string; clearApiKey?: boolean }) =>
     request<AiSettings>("/api/ai/settings", { method: "PUT", body: JSON.stringify(body) }),
-  generateAiAutomation: (body: { prompt: string; directoryPath?: string; reportPath?: string; cron?: string; timezone?: string; scheduleLabel?: string; approvalAtEnd?: boolean }) =>
+  generateAiAutomation: (body: { prompt: string; directoryPath?: string; directoryPaths?: string[]; reportPath?: string; cron?: string; timezone?: string; scheduleLabel?: string; approvalAtEnd?: boolean }) =>
     request<AiAutomationPlan>("/api/ai/automation-plan", { method: "POST", body: JSON.stringify(body) }),
   createAiWorkflow: (body: AiAutomationPlan) => request<Workflow>("/api/ai/workflows", { method: "POST", body: JSON.stringify(body) }),
   jobs: () => request<Array<Job & { logs: JobRunLog[]; workflow?: Workflow }>>("/api/jobs"),
@@ -115,7 +115,7 @@ export const api = {
   localAgentHealth: async () => {
     const response = await fetch("http://127.0.0.1:4687/health");
     if (!response.ok) throw new Error("Yerel ajan çevrimdışı.");
-    return response.json() as Promise<{ ok: boolean; platform: string; recording: boolean }>;
+    return response.json() as Promise<{ ok: boolean; platform: string; recording: boolean; apiBase: string }>;
   },
   startDesktopRecording: (sessionId: string) => fetch("http://127.0.0.1:4687/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }).then(async (response) => {
     const payload = await response.json();

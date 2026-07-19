@@ -1,17 +1,34 @@
-import { CalendarDays, CheckCircle2, FolderOpen, Play, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, CalendarDays, CheckCircle2, FolderOpen, Play, Save, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AiAutomationPlan, AiRuntimeStatus, Workflow } from "../../shared/saasTypes";
 import { api } from "../api";
 import { useExperienceMode } from "../ui/ExperienceMode";
 
 const dayNames = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
+const folderChoices = [
+  { path: "~/Documents", label: "Belgeler", description: "Projeler ve iş belgeleri" },
+  { path: "~/Downloads", label: "İndirilenler", description: "Yeni gelen dosyalar" },
+  { path: "~/Desktop", label: "Masaüstü", description: "Günlük çalışma dosyaları" }
+];
+
+function agentUsesCurrentBackend(apiBase: string) {
+  try {
+    const ui = new URL(window.location.href);
+    const api = new URL(apiBase);
+    const localUi = ["localhost", "127.0.0.1"].includes(ui.hostname);
+    const localApi = ["localhost", "127.0.0.1"].includes(api.hostname);
+    return ui.origin === api.origin || (localUi && localApi);
+  } catch {
+    return false;
+  }
+}
 
 export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: () => Promise<void> }) {
   const { mode } = useExperienceMode();
   const [aiStatus, setAiStatus] = useState<AiRuntimeStatus | null>(null);
   const [prompt, setPrompt] = useState("Bütün dosyalarımı haftada bir incele. Son bir haftada yeni gelen ve değişen dosyaları özetle, günlere göre neler yaptığımı raporla. Her pazartesi saat 09:00'da raporu hazırla.");
-  const [directoryPath, setDirectoryPath] = useState("/Users/ht44/Documents");
-  const [reportPath, setReportPath] = useState("/Users/ht44/Documents/OtoFlow Raporları/haftalik-dosya-raporu.md");
+  const [directoryPaths, setDirectoryPaths] = useState(folderChoices.map((folder) => folder.path));
+  const [reportPath, setReportPath] = useState("~/Documents/OtoFlow Raporları/haftalik-dosya-raporu.md");
   const [frequency, setFrequency] = useState<"manual" | "daily" | "weekly">("weekly");
   const [dayOfWeek, setDayOfWeek] = useState(1);
   const [time, setTime] = useState("09:00");
@@ -19,9 +36,14 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
   const [plan, setPlan] = useState<AiAutomationPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     api.aiStatus().then(setAiStatus).catch(() => undefined);
+    const checkAgent = () => api.localAgentHealth().then((health) => setAgentOnline(agentUsesCurrentBackend(health.apiBase))).catch(() => setAgentOnline(false));
+    void checkAgent();
+    const timer = window.setInterval(checkAgent, 5_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const schedule = useMemo(() => {
@@ -37,7 +59,8 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
     try {
       const generated = await api.generateAiAutomation({
         prompt,
-        directoryPath,
+        directoryPath: directoryPaths[0],
+        directoryPaths,
         reportPath,
         cron: schedule.cron,
         timezone: "Europe/Istanbul",
@@ -71,7 +94,16 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
     setMessage(null);
     try {
       const workflow = await api.createAiWorkflow(plan);
-      if (runNow) await api.runWorkflow(workflow.id, "AI ile hazırlanan workflow ilk çalıştırması");
+      if (runNow) {
+        const health = await api.localAgentHealth().catch(() => null);
+        if (!health || !agentUsesCurrentBackend(health.apiBase)) {
+          setAgentOnline(false);
+          await refreshDashboard();
+          setMessage("Otomasyon ve pazartesi 09:00 zamanlaması kaydedildi. Bu bilgisayarda çalıştırmak için Bilgisayar Ajanı bağlantısını açın.");
+          return;
+        }
+        await api.runWorkflow(workflow.id, "AI ile hazırlanan workflow ilk çalıştırması");
+      }
       await refreshDashboard();
       setMessage(runNow ? "Otomasyon kaydedildi ve çalışmaya başladı." : "Otomasyon kaydedildi; belirlediğiniz zamanda otomatik çalışacak.");
     } catch (error) {
@@ -120,15 +152,29 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
             Rapor kaydında onay iste
           </label>
         </div>
+        <div className="mt-5">
+          <div className="flex items-center gap-2 text-sm font-semibold"><FolderOpen className="text-brand" size={16} />Nereler incelensin?</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {folderChoices.map((folder) => {
+              const selected = directoryPaths.includes(folder.path);
+              return <label key={folder.path} className={`flex min-h-20 cursor-pointer items-center gap-3 rounded-md border p-3 ${selected ? "border-teal-300 bg-teal-50" : "border-line bg-white"}`}>
+                <input type="checkbox" checked={selected} onChange={(event) => setDirectoryPaths((current) => event.target.checked ? [...current, folder.path] : current.filter((path) => path !== folder.path))} />
+                <span><span className="block text-sm font-semibold">{folder.label}</span><span className="mt-1 block text-xs text-muted">{folder.description}</span></span>
+              </label>;
+            })}
+          </div>
+        </div>
         <div className={`mt-4 gap-4 lg:grid-cols-2 ${mode === "advanced" ? "grid" : "hidden"}`}>
-          <label className="block text-sm font-semibold"><FolderOpen className="mr-2 inline text-brand" size={16} />Taranacak klasör
-            <input className="input mt-2" value={directoryPath} onChange={(event) => setDirectoryPath(event.target.value)} />
-          </label>
+          <div className="rounded-md border border-line bg-slate-50 p-3 text-sm"><span className="font-semibold">Taranacak yollar</span><div className="mt-2 font-mono text-xs text-muted">{directoryPaths.join(", ") || "En az bir klasör seçin"}</div></div>
           <label className="block text-sm font-semibold">Rapor dosyası
             <input className="input mt-2" value={reportPath} onChange={(event) => setReportPath(event.target.value)} />
           </label>
         </div>
-        <button className="button-primary mt-5" disabled={busy || prompt.trim().length < 12} onClick={() => void generatePlan()}>
+        <div className={`mt-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${agentOnline ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-950"}`}>
+          <Bot size={17} />
+          <span className="font-semibold">{agentOnline ? "Bu bilgisayar bağlı; dosya otomasyonu gerçek olarak çalışabilir." : agentOnline === null ? "Bilgisayar bağlantısı kontrol ediliyor..." : "Bilgisayar Ajanı kapalı; otomasyon kaydedilir ancak dosyaları taramak için bağlantı gerekir."}</span>
+        </div>
+        <button className="button-primary mt-5" disabled={busy || prompt.trim().length < 12 || directoryPaths.length === 0} onClick={() => void generatePlan()}>
           <Sparkles size={16} /> {busy ? "Hazırlanıyor..." : "Otomasyonu Hazırla"}
         </button>
         {message ? <div className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-900 ring-1 ring-blue-100">{message}</div> : null}
@@ -145,7 +191,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
               </div>
               <div className="flex flex-wrap gap-2">
                 <button className="button-secondary" disabled={busy} onClick={() => void saveWorkflow(false)}><Save size={16} /> Daha Sonra Kullan</button>
-                <button className="button-primary" disabled={busy} onClick={() => void saveWorkflow(true)}><Play size={16} /> Kaydet ve Şimdi Çalıştır</button>
+                <button className="button-primary" disabled={busy} onClick={() => void saveWorkflow(true)}><Play size={16} /> {agentOnline ? "Kaydet ve Şimdi Çalıştır" : "Kaydet ve Bağlantıyı Bekle"}</button>
               </div>
             </div>
           </div>
