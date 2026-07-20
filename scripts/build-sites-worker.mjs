@@ -261,7 +261,7 @@ function advanceCloudJobs(state) {
 function buildAiFilePlan(body) {
   const directoryPaths = Array.isArray(body.directoryPaths) && body.directoryPaths.length ? body.directoryPaths : [body.directoryPath || "~/Documents", "~/Downloads", "~/Desktop"];
   const directoryPath = directoryPaths[0];
-  const reportPath = body.reportPath || "~/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.md";
+  const reportPath = body.reportPath || "~/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.pdf";
   const schedule = {
     enabled: Boolean(body.cron),
     cron: body.cron || "0 9 * * 1",

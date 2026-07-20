@@ -7,7 +7,7 @@ const suffix = Date.now().toString(36);
 const base = path.resolve("data", `multi-root-${suffix}`);
 const documents = path.join(base, "Documents");
 const downloads = path.join(base, "Downloads");
-const reportPath = path.join(documents, "OtoFlow Raporları", "haftalik.md");
+const reportPath = path.join(documents, "OtoFlow Raporları", "haftalik.pdf");
 
 await fs.mkdir(path.join(documents, "proje"), { recursive: true });
 await fs.mkdir(downloads, { recursive: true });
@@ -37,7 +37,10 @@ try {
   assert.equal(Object.values(activity.byDayDetails)[0].count, 2);
   assert.match(report, /Klasörlere Göre Aktivite/);
   assert.equal(saved.reportPath, reportPath);
-  assert.match(await fs.readFile(reportPath, "utf8"), /yeni-talep\.txt/);
+  assert.equal(saved.format, "pdf");
+  const pdf = await fs.readFile(reportPath);
+  assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
+  assert.ok(pdf.length > 5_000);
 } finally {
   await fs.rm(base, { recursive: true, force: true });
 }

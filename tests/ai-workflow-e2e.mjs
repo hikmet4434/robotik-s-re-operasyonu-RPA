@@ -5,7 +5,7 @@ import path from "node:path";
 const apiBase = process.env.OTOFLOW_TEST_API || "http://127.0.0.1:4100";
 const suffix = Date.now().toString(36);
 const testDir = path.resolve("data", `ai-e2e-${suffix}`);
-const reportPath = path.join(testDir, "raporlar", "haftalik-rapor.md");
+const reportPath = path.join(testDir, "raporlar", "haftalik-rapor.pdf");
 
 async function request(route, init = {}) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -91,10 +91,9 @@ const completed = await waitFor(async () => {
   if (current.status === "failed") throw new Error(current.lastError || "Onay sonrası rapor kaydedilemedi.");
   return current.status === "succeeded" ? current : null;
 });
-const report = await fs.readFile(reportPath, "utf8");
-assert.match(report, /Haftalık Dosya ve Çalışma Özeti/);
-assert.match(report, /toplanti-notlari\.md/);
-assert.match(report, /durum\.csv/);
+const report = await fs.readFile(reportPath);
+assert.equal(report.subarray(0, 5).toString("ascii"), "%PDF-");
+assert.ok(report.length > 5_000);
 assert.equal(completed.outputs.savedReport.reportPath, reportPath);
 assert.equal(completed.outputs._result.status, "succeeded");
 assert.equal(completed.outputs._result.reportPath, reportPath);

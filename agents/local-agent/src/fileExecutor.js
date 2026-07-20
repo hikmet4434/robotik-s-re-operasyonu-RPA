@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { writePdfReport } from "./pdfReport.js";
 
 const readableExtensions = new Set([".txt", ".md", ".json", ".csv", ".tsv", ".log", ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts", ".tsx", ".jsx"]);
 const ignoredDirectoryNames = new Set(["node_modules", ".git", ".next", "dist", "build", "coverage", "target", "vendor", ".venv", "venv", "__pycache__", "browser-profile", "Cache", "Caches", "Code Cache", "GPUCache", "OtoFlow Raporları"]);
@@ -241,8 +242,10 @@ export class FileExecutor {
     if (!report) throw new Error("Kaydedilecek rapor çıktısı bulunamadı.");
     const reportPath = this.assertAllowed(parameters.reportPath);
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
-    await fs.writeFile(reportPath, report, "utf8");
-    return { reportPath, bytes: Buffer.byteLength(report), savedAt: new Date().toISOString() };
+    const isPdf = path.extname(reportPath).toLowerCase() === ".pdf";
+    const bytes = isPdf ? await writePdfReport(report, reportPath) : Buffer.byteLength(report);
+    if (!isPdf) await fs.writeFile(reportPath, report, "utf8");
+    return { reportPath, bytes, format: isPdf ? "pdf" : "markdown", savedAt: new Date().toISOString() };
   }
 
   async execute(step, outputs) {
@@ -261,7 +264,7 @@ export class FileExecutor {
     }
     if (step.type === "report.compose") {
       const output = this.composeReport(outputs, parameters);
-      return { summary: "Haftalık Markdown raporu hazırlandı.", output };
+      return { summary: "Haftalık rapor hazırlandı.", output };
     }
     if (step.type === "report.save") {
       const output = await this.saveReport(outputs, parameters);

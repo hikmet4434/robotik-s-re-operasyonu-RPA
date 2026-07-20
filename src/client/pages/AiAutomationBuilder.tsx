@@ -28,7 +28,7 @@ export function AiAutomationBuilder({ refreshDashboard }: { refreshDashboard: ()
   const [aiStatus, setAiStatus] = useState<AiRuntimeStatus | null>(null);
   const [prompt, setPrompt] = useState("Bütün dosyalarımı haftada bir incele. Son bir haftada yeni gelen ve değişen dosyaları özetle, günlere göre neler yaptığımı raporla. Her pazartesi saat 09:00'da raporu hazırla.");
   const [directoryPaths, setDirectoryPaths] = useState(folderChoices.map((folder) => folder.path));
-  const [reportPath, setReportPath] = useState("~/Documents/OtoFlow Raporları/haftalik-dosya-raporu.md");
+  const [reportPath, setReportPath] = useState("~/Documents/OtoFlow Raporları/haftalik-dosya-raporu.pdf");
   const [frequency, setFrequency] = useState<"manual" | "daily" | "weekly">("weekly");
   const [dayOfWeek, setDayOfWeek] = useState(1);
   const [time, setTime] = useState("09:00");

@@ -358,7 +358,7 @@ function requestedDirectoryPaths(input: AiPlanRequest) {
 
 function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
   const directoryPaths = requestedDirectoryPaths(input);
-  const reportPath = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "haftalik-dosya-raporu.md");
+  const reportPath = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "haftalik-dosya-raporu.pdf");
   const steps: WorkflowStep[] = [
     {
       id: stepId(), type: "files.scan", title: "Yeni ve değişen dosyaları tara",
@@ -379,7 +379,7 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
     },
     {
       id: stepId(), type: "report.compose", title: "Haftalık raporu hazırla",
-      description: "Dosya özetleri ve çalışma dağılımını tek bir okunabilir Markdown raporunda birleştirir.",
+      description: "Dosya özetleri ve çalışma dağılımını tek bir okunabilir raporda birleştirir.",
       requiresApproval: false, riskLevel: "low",
       parameters: { outputKey: "weeklyReport", reportTitle: "Haftalık Dosya ve Çalışma Özeti" }
     },
@@ -416,7 +416,7 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
 
 function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
   const directoryPaths = requestedDirectoryPaths(input);
-  const defaultReport = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "otomasyon-raporu.md");
+  const defaultReport = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "otomasyon-raporu.pdf");
   plan.schedule = {
     enabled: Boolean(input.cron),
     cron: input.cron || "0 9 * * 1",
