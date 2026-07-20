@@ -16,15 +16,7 @@
         </div>
       </header>
 
-      <label>
-        API adresi
-        <input id="apiBase" value="http://localhost:4100" />
-      </label>
-
-      <label>
-        Kayıt oturumu ID
-        <input id="sessionId" placeholder="rec_..." />
-      </label>
+      <div class="notice">Kayıt için uygulama girişi gerekmez. Aşağıdaki düğmeye basıp kaydetmek istediğiniz işi yapmanız yeterlidir.</div>
 
       <label>
         Yeni iş adı
@@ -36,10 +28,20 @@
         <textarea id="goal">Kullanıcının dış web uygulamasında yaptığı işi tekrar çalıştırılabilir otomasyona çevir.</textarea>
       </label>
 
-      <div class="actions">
-        <button id="create">Oturum Aç</button>
-        <button id="toggle">Kaydı Başlat</button>
-      </div>
+      <button id="toggle" class="primary">Kaydı Başlat</button>
+      <button id="create" class="secondary">Yeni Kayıt Hazırla</button>
+
+      <details>
+        <summary>Bağlantı bilgileri</summary>
+        <label>
+          OtoFlow bağlantısı
+          <input id="apiBase" value="http://localhost:4100" />
+        </label>
+        <label>
+          Kayıt numarası
+          <input id="sessionId" placeholder="Kayıt başlayınca otomatik oluşur" readonly />
+        </label>
+      </details>
 
       <p id="status">Hazır.</p>
     </main>

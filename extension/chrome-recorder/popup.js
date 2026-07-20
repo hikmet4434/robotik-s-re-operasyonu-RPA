@@ -18,40 +18,57 @@ async function saveState(partial) {
   await loadState();
 }
 
+async function createSession() {
+  const apiBase = apiBaseInput.value.replace(/\/$/, "");
+  const response = await fetch(`${apiBase}/api/recordings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: titleInput.value,
+      goal: goalInput.value,
+      appName: "Chrome Recorder"
+    })
+  });
+  const session = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof session.error === "string" ? session.error : "OtoFlow bağlantısı kurulamadı. Bilgisayar bağlantısının açık olduğundan emin olun.");
+  await saveState({ apiBase, sessionId: session.id, recording: false });
+  return session;
+}
+
+async function notifyActiveTab(recording) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("Kaydetmek istediğiniz normal web sayfasını açıp tekrar deneyin.");
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "OTOFLOW_RECORDING_STATE", recording });
+  } catch {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    await chrome.tabs.sendMessage(tab.id, { type: "OTOFLOW_RECORDING_STATE", recording });
+  }
+}
+
 createBtn.addEventListener("click", async () => {
   try {
-    const apiBase = apiBaseInput.value.replace(/\/$/, "");
-    const response = await fetch(`${apiBase}/api/recordings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: titleInput.value,
-        goal: goalInput.value,
-        appName: "Chrome Recorder"
-      })
-    });
-    const session = await response.json();
-    if (!response.ok) throw new Error(session.error || "Oturum açılamadı.");
-    await saveState({ apiBase, sessionId: session.id, recording: false });
-    statusEl.textContent = `Oturum hazır: ${session.id}`;
+    const session = await createSession();
+    statusEl.textContent = `Yeni kayıt hazır: ${session.id}`;
   } catch (error) {
     statusEl.textContent = error.message;
   }
 });
 
 toggleBtn.addEventListener("click", async () => {
-  const state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
-  if (!state.sessionId) {
-    statusEl.textContent = "Önce oturum aç.";
-    return;
+  try {
+    let state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
+    if (!state.recording && !state.sessionId) {
+      await createSession();
+      state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
+    }
+    const recording = !state.recording;
+    await notifyActiveTab(recording);
+    await saveState({ apiBase: apiBaseInput.value.replace(/\/$/, ""), sessionId: state.sessionId || sessionInput.value, recording });
+    statusEl.textContent = recording ? "Kayıt başladı. İşleminizi normal şekilde yapın." : "Kayıt durdu. Adımlarınız OtoFlow’a kaydedildi.";
+  } catch (error) {
+    statusEl.textContent = error.message;
   }
-  const recording = !state.recording;
-  await saveState({ apiBase: apiBaseInput.value.replace(/\/$/, ""), sessionId: sessionInput.value, recording });
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) {
-    chrome.tabs.sendMessage(tab.id, { type: "OTOFLOW_RECORDING_STATE", recording });
-  }
-  statusEl.textContent = recording ? "Kayıt başladı." : "Kayıt durdu.";
 });
 
 loadState();

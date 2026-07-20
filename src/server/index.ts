@@ -111,7 +111,8 @@ app.use(cors((req, callback) => {
       sameOrigin = false;
     }
   }
-  const permitted = !origin || process.env.NODE_ENV !== "production" || sameOrigin || allowedOrigins.has(origin);
+  const chromeRecorder = Boolean(origin?.startsWith("chrome-extension://"));
+  const permitted = !origin || process.env.NODE_ENV !== "production" || sameOrigin || chromeRecorder || allowedOrigins.has(origin);
   callback(permitted ? null : new Error("Bu arayüz kaynağına CORS izni verilmemiş."), { origin: permitted });
 }));
 app.use(express.json({ limit: "2mb" }));

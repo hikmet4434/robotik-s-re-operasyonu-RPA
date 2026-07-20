@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OtoFlow Recorder",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "KOBİ işleri için tıklama, input, sekme ve sayfa olaylarını OtoFlow Recorder Studio'ya aktarır.",
   "permissions": ["activeTab", "storage", "tabs", "scripting"],
   "host_permissions": ["http://localhost:4100/*", "http://localhost:5173/*", "<all_urls>"],

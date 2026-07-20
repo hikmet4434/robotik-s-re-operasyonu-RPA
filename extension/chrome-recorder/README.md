@@ -8,7 +8,8 @@ Bu uzantı dış web uygulamalarında yapılan işi OtoFlow Recorder Studio'ya a
 2. `Developer mode` seçeneğini aç.
 3. `Load unpacked` butonuna bas.
 4. Bu klasörü seç: `extension/chrome-recorder`.
-5. OtoFlow uygulamasında `Recorder Studio` ekranında kayıt oturumu başlat veya popup içinden yeni oturum aç.
+5. Kaydetmek istediğin normal web sayfasını aç.
+6. OtoFlow Recorder simgesine basıp `Kaydı Başlat` seçeneğini kullan. Kayıt oturumu otomatik hazırlanır; ayrıca uygulama girişi gerekmez.
 
 ## Güvenlik
 

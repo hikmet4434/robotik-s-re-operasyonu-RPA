@@ -168,7 +168,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
   const [session, setSession] = useState<RecordingSession | null>(null);
   const [events, setEvents] = useState<RecorderEvent[]>([]);
   const [draft, setDraft] = useState<AutomationDraft | null>(null);
-  const [activeArea, setActiveArea] = useState<"login" | "reports" | "email">("login");
+  const [activeArea, setActiveArea] = useState<"login" | "reports" | "email">("reports");
   const [screenStatus, setScreenStatus] = useState<"idle" | "recording" | "captured" | "unsupported">("idle");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
@@ -347,14 +347,14 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
         <section className="panel p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="section-title">Deneme Alanı</h2>
-              <p className="muted">Kaydı başlattıktan sonra aşağıdaki örnek işlemi tamamlayın.</p>
+              <h2 className="section-title">İsteğe Bağlı Deneme Alanı</h2>
+              <p className="muted">Bu alan yalnızca deneme içindir; kayıt başlatmak için uygulama girişi yapmanız gerekmez.</p>
             </div>
             <StatusPill value={session ? "recording" : "idle"} />
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
-            <button className={`button-secondary ${activeArea === "login" ? "bg-teal-50 text-brand" : ""}`} onClick={() => { setActiveArea("login"); void capture({ type: "tab.switch", label: "Giriş sekmesine geç", target: "tab-login", appArea: "Demo Portal", selectorHint: "[data-tab=login]" }); }}>Giriş</button>
+            <button className={`button-secondary ${activeArea === "login" ? "bg-teal-50 text-brand" : ""}`} onClick={() => { setActiveArea("login"); void capture({ type: "tab.switch", label: "Örnek giriş sekmesine geç", target: "tab-login", appArea: "Demo Portal", selectorHint: "[data-tab=login]" }); }}>Örnek Giriş</button>
             <button className={`button-secondary ${activeArea === "reports" ? "bg-teal-50 text-brand" : ""}`} onClick={() => { setActiveArea("reports"); void capture({ type: "tab.switch", label: "Raporlar sekmesine geç", target: "tab-reports", appArea: "Demo Portal", selectorHint: "[data-tab=reports]" }); }}>Raporlar</button>
             <button className={`button-secondary ${activeArea === "email" ? "bg-teal-50 text-brand" : ""}`} onClick={() => { setActiveArea("email"); void capture({ type: "tab.switch", label: "E-posta sekmesine geç", target: "tab-email", appArea: "E-posta", selectorHint: "[data-tab=email]" }); }}>E-posta</button>
           </div>
@@ -443,7 +443,8 @@ npm start`}</pre>
 function RecorderLogin({ capture }: { capture: (event: Omit<RecorderEvent, "id" | "ts">) => Promise<void> }) {
   return (
     <div className="rounded-lg border border-line bg-white p-5">
-      <h3 className="font-bold">Uygulama Girişi</h3>
+      <h3 className="font-bold">Örnek Uygulama Girişi</h3>
+      <p className="muted mt-1">Bu bölüm isteğe bağlı bir denemedir. Kendi uygulamanızdaki işi kaydetmek için burayı doldurmayın.</p>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <input className="input" placeholder="Kullanıcı adı" onChange={(event) => void capture({ type: "input", label: "Kullanıcı adı girildi", target: "username", value: event.target.value, appArea: "Giriş", selectorHint: "input[name=username]" })} />
         <input className="input" placeholder="Şifre/PIN kaydedilmez" type="password" onChange={() => void capture({ type: "input", label: "Şifre alanı kullanıldı", target: "password", value: "MASKED_SECRET", appArea: "Giriş", selectorHint: "input[type=password]" })} />
