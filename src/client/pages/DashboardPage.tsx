@@ -401,20 +401,19 @@ function RecorderInstallPanel() {
             <Radio size={19} />
           </div>
           <div>
-            <h2 className="font-bold">Chrome Recorder Extension</h2>
+            <h2 className="font-bold">Chrome Recorder’ı Kurun</h2>
             <p className="mt-1 text-sm leading-6 text-muted">
               Dış web uygulamalarında tıklama, input, seçim, form, URL ve sekme olaylarını yakalar. Secret/PIN/OTP alanlarını maskeler.
             </p>
           </div>
         </div>
-        <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm ring-1 ring-line">
-          Klasör: <span className="font-mono">extension/chrome-recorder</span>
-        </div>
+        <a className="button-primary mt-4" href="/downloads/otoflow-chrome-recorder.zip" download><Download size={16} />Chrome Recorder’ı İndir</a>
         <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-muted">
-          <li>Chrome’da <span className="font-mono">chrome://extensions</span> aç.</li>
-          <li>Developer mode’u aç.</li>
-          <li>Load unpacked ile extension klasörünü seç.</li>
-          <li>Popup’tan kayıt oturumunu seçip kaydı başlat.</li>
+          <li>İnen ZIP dosyasını çift tıklayıp klasöre çıkarın.</li>
+          <li>Chrome’da <span className="font-mono">chrome://extensions</span> adresini açın.</li>
+          <li>Sağ üstten <strong>Geliştirici modu</strong> seçeneğini açın.</li>
+          <li><strong>Paketlenmemiş öğe yükle</strong> düğmesine basıp <span className="font-semibold">chrome-recorder</span> klasörünü seçin.</li>
+          <li>Chrome araç çubuğundaki OtoFlow Recorder simgesinden kaydı başlatın.</li>
         </ol>
       </div>
 
