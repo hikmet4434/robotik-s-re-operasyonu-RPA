@@ -1,4 +1,4 @@
-import { Bell, Bot, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, Settings2, ShieldCheck, Sparkles, Workflow } from "lucide-react";
+import { Bell, Bot, Download, FileSearch, Inbox, KeyRound, LayoutDashboard, Lightbulb, Radio, Route, Settings2, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -10,10 +10,10 @@ const links = [
   { to: "/ai-builder", label: "Yazarak Otomasyon", icon: Sparkles },
   { to: "/recorder", label: "Göstererek Otomasyon", icon: Radio },
   { to: "/workflows", label: "Otomasyonlarım", icon: Workflow },
+  { to: "/jobs", label: "Hazırlanan Dosyalar", icon: Download },
   { to: "/approvals", label: "Onay Bekleyenler", icon: Inbox },
   { to: "/documents", label: "Belgeler", icon: FileSearch },
   { to: "/connectors", label: "Hesaplar ve Bağlantılar", icon: KeyRound },
-  { to: "/jobs", label: "İş ve Robot Takibi", icon: Bot, advancedOnly: true },
   { to: "/opportunities", label: "Fikirler ve Kazanç", icon: Lightbulb, advancedOnly: true },
   { to: "/compliance", label: "Güvenlik ve Kayıtlar", icon: ShieldCheck, advancedOnly: true }
 ];
@@ -23,7 +23,7 @@ export function AppLayout() {
   const location = useLocation();
   const { mode, setMode } = useExperienceMode();
   const visibleLinks = links.filter((link) => mode === "advanced" || !link.advancedOnly);
-  const mobileLinks = links.filter((link) => ["/dashboard", "/ai-builder", "/workflows", "/approvals", "/documents"].includes(link.to));
+  const mobileLinks = links.filter((link) => ["/dashboard", "/ai-builder", "/workflows", "/jobs", "/approvals"].includes(link.to));
 
   useEffect(() => {
     api.dashboard().then((payload) => {
@@ -108,7 +108,7 @@ export function AppLayout() {
           const Icon = link.icon;
           return <NavLink key={link.to} to={link.to} className={({ isActive }) => `relative flex min-h-14 flex-col items-center justify-center gap-1 rounded text-[10px] font-semibold ${isActive ? "text-brand" : "text-muted"}`}>
             <Icon size={19} />
-            <span className="max-w-full truncate px-1">{link.to === "/ai-builder" ? "Oluştur" : link.to === "/workflows" ? "Otomasyon" : link.to === "/approvals" ? "Onaylar" : link.label}</span>
+            <span className="max-w-full truncate px-1">{link.to === "/ai-builder" ? "Oluştur" : link.to === "/workflows" ? "Otomasyon" : link.to === "/jobs" ? "Dosyalar" : link.to === "/approvals" ? "Onaylar" : link.label}</span>
             {link.to === "/approvals" && pending > 0 ? <span className="notification-count right-2 top-1" aria-hidden="true">{pending}</span> : null}
           </NavLink>;
         })}

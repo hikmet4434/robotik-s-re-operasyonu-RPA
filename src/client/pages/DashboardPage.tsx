@@ -56,7 +56,7 @@ const tabLabels: Record<Tab, string> = {
   "ai-builder": "Yazarak Oluştur",
   recorder: "Göstererek Oluştur",
   workflows: "Otomasyonlarım",
-  jobs: "İş Takibi",
+  jobs: "Hazırlanan Dosyalar",
   approvals: "Onay Bekleyenler",
   documents: "Belgeler",
   opportunities: "Fikirler ve Kazanç",
@@ -65,7 +65,7 @@ const tabLabels: Record<Tab, string> = {
 };
 
 const tabPaths: Record<Tab, string> = Object.fromEntries((Object.keys(tabLabels) as Tab[]).map((tab) => [tab, tab === "dashboard" ? "/dashboard" : `/${tab}`])) as Record<Tab, string>;
-const simpleTabs: Tab[] = ["dashboard", "ai-builder", "recorder", "workflows", "approvals", "documents", "connectors"];
+const simpleTabs: Tab[] = ["dashboard", "ai-builder", "recorder", "workflows", "jobs", "approvals", "documents", "connectors"];
 
 export function DashboardPage() {
   const [data, setData] = useState<SaasDashboard | null>(null);
@@ -150,7 +150,7 @@ export function DashboardPage() {
       {activeTab === "ai-builder" ? <AiAutomationBuilder refreshDashboard={refresh} /> : null}
       {activeTab === "recorder" ? <RecorderStudio data={data} refreshDashboard={refresh} /> : null}
       {activeTab === "workflows" ? <Workflows data={data} onRun={runWorkflow} refresh={refresh} setMessage={setMessage} /> : null}
-      {activeTab === "jobs" ? <Jobs data={data} refresh={refresh} /> : null}
+      {activeTab === "jobs" ? <Jobs data={data} refresh={refresh} mode={mode} /> : null}
       {activeTab === "approvals" ? <Approvals data={data} onResolve={approve} /> : null}
       {activeTab === "documents" ? <Documents data={data} refresh={refresh} /> : null}
       {activeTab === "opportunities" ? <Opportunities data={data} refresh={refresh} /> : null}
@@ -726,7 +726,8 @@ function SimpleOverview({ data, openTab }: { data: SaasDashboard; openTab: (tab:
   const actions = [
     { title: "Ne istediğinizi yazın", text: "Yapılacak işi günlük dille anlatın.", icon: Sparkles, tab: "ai-builder" as Tab, tone: "bg-teal-50 text-brand" },
     { title: "Yaptığınız işi gösterin", text: "Ekranda bir kez yapın, adımları kaydedelim.", icon: Radio, tab: "recorder" as Tab, tone: "bg-blue-50 text-blue-700" },
-    { title: "Hazır otomasyonu çalıştırın", text: "Daha önce hazırlanan işlerden birini seçin.", icon: Play, tab: "workflows" as Tab, tone: "bg-emerald-50 text-emerald-700" }
+    { title: "Hazır otomasyonu çalıştırın", text: "Daha önce hazırlanan işlerden birini seçin.", icon: Play, tab: "workflows" as Tab, tone: "bg-emerald-50 text-emerald-700" },
+    { title: "Hazırlanan dosyaları görün", text: "Raporları açın veya bilgisayarınıza indirin.", icon: Download, tab: "jobs" as Tab, tone: "bg-amber-50 text-amber-700" }
   ];
   const attentionItems = [
     { label: "Onayınızı bekleyen işler", count: data.approvals.filter((task) => task.status === "pending").length, tab: "approvals" as Tab },
@@ -745,7 +746,7 @@ function SimpleOverview({ data, openTab }: { data: SaasDashboard; openTab: (tab:
     <div className="space-y-7">
       <section>
         <h2 className="section-title">Bugün ne yapmak istersiniz?</h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {actions.map((action) => {
             const Icon = action.icon;
             return <button key={action.title} className="panel group p-5 text-left transition hover:border-teal-300 hover:shadow-md" onClick={() => openTab(action.tab)}>
@@ -877,7 +878,7 @@ function Workflows({
   );
 }
 
-function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<void> }) {
+function Jobs({ data, refresh, mode }: { data: SaasDashboard; refresh: () => Promise<void>; mode: "simple" | "advanced" }) {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(data.jobs[0]?.id ?? null);
 
   async function cancel(job: Job) {
@@ -895,6 +896,10 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
   const selectedLogs = selectedJob ? data.jobLogs.filter((log) => log.jobId === selectedJob.id) : [];
   const scheduled = data.workflows.filter((workflow) => workflow.schedule?.enabled);
   const activeCount = data.jobs.filter((job) => ["queued", "running", "waiting_approval"].includes(job.status)).length;
+  const preparedReports = data.jobs.filter((job) => {
+    const result = friendlyJobResult(job);
+    return Boolean(result?.reportPath || result?.detailReportPath);
+  });
 
   function downloadResult(job: Job) {
     const blob = new Blob([JSON.stringify({ jobId: job.id, status: job.status, outputs: job.outputs, completedAt: job.completedAt }, null, 2)], { type: "application/json" });
@@ -903,6 +908,63 @@ function Jobs({ data, refresh }: { data: SaasDashboard; refresh: () => Promise<v
     link.download = `otoflow-sonuc-${job.id}.json`;
     link.click();
     URL.revokeObjectURL(link.href);
+  }
+
+  if (mode === "simple") {
+    return (
+      <div className="space-y-5">
+        <section className="panel p-5">
+          <h2 className="section-title">Hazırlanan Dosyalar</h2>
+          <p className="muted mt-1">Otomasyonların hazırladığı raporları burada görebilir, açabilir veya tarayıcınızdan indirebilirsiniz.</p>
+          <div className="mt-3 rounded-md bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900 ring-1 ring-blue-100">
+            Haftalık raporlar bilgisayarınızda <strong>Belgeler → OtoFlow Raporları</strong> klasörüne de kaydedilir.
+          </div>
+        </section>
+
+        {preparedReports.length ? preparedReports.map((job) => {
+          const result = friendlyJobResult(job)!;
+          const workflowName = data.workflows.find((workflow) => workflow.id === job.workflowId)?.name;
+          return (
+            <section key={job.id} className="panel overflow-hidden">
+              <div className="border-b border-line px-5 py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="font-bold">{result.title || workflowName || "Hazırlanan rapor"}</h3>
+                    <p className="muted mt-1">{result.summary || "Otomasyon başarıyla tamamlandı ve dosyalar hazırlandı."}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Hazır</span>
+                </div>
+              </div>
+              <div className="grid gap-3 p-5 md:grid-cols-2">
+                {result.reportPath ? (
+                  <a className="rounded-lg border border-teal-200 bg-teal-50 p-4 transition hover:border-teal-400 hover:shadow-sm" href={api.jobReportUrl(job.id, "summary")} target="_blank" rel="noreferrer">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-brand"><FileSearch size={20} /></div>
+                      <div><div className="font-bold text-ink">Kısa PDF</div><div className="mt-1 text-sm leading-5 text-muted">Tek sayfalık, kolay okunur haftalık özet</div><div className="mt-3 text-sm font-bold text-brand">Dosyayı Aç →</div></div>
+                    </div>
+                  </a>
+                ) : null}
+                {result.detailReportPath ? (
+                  <a className="rounded-lg border border-line bg-white p-4 transition hover:border-slate-400 hover:shadow-sm" href={api.jobReportUrl(job.id, "details")} target="_blank" rel="noreferrer">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700"><FileSearch size={20} /></div>
+                      <div><div className="font-bold text-ink">Ayrıntılı PDF</div><div className="mt-1 text-sm leading-5 text-muted">Dosyalarda yapılan işlemlerin sade açıklaması</div><div className="mt-3 text-sm font-bold text-brand">Dosyayı Aç →</div></div>
+                    </div>
+                  </a>
+                ) : null}
+              </div>
+              {result.generatedAt || job.completedAt ? <div className="border-t border-line px-5 py-3 text-xs text-muted">Hazırlanma tarihi: {formatDate(result.generatedAt || job.completedAt!)}</div> : null}
+            </section>
+          );
+        }) : (
+          <section className="panel p-6 text-center">
+            <FileSearch className="mx-auto text-slate-300" size={36} />
+            <h3 className="mt-3 font-bold">Henüz hazırlanmış dosya yok</h3>
+            <p className="muted mt-1">Bir rapor otomasyonu tamamlandığında dosyalar otomatik olarak burada görünecek.</p>
+          </section>
+        )}
+      </div>
+    );
   }
 
   return (
