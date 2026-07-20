@@ -34,11 +34,28 @@ try {
   const detailReport = executor.composeDetailedReport(reportOutputs, { detailReportTitle: "Haftalık Çalışma Ayrıntıları" });
   const saved = await executor.saveReport({ ...reportOutputs, weeklyReport: report }, { reportPath });
 
+  let prioritizedFiles = [];
+  const priorityExecutor = new FileExecutor(async (files) => {
+    prioritizedFiles = files;
+    return "- Yönetim giriş ekranındaki eksik tanım hatası giderildi.";
+  });
+  const priorityScan = {
+    ...scan,
+    files: [
+      ...Array.from({ length: 100 }, (_, index) => ({ ...scan.files[0], name: `genel-${index}.md`, relativePath: `Documents/proje/genel-${index}.md` })),
+      { ...scan.files[0], name: "ReferenceError-AdminLogin-is-not-defined.txt", relativePath: "Documents/proje/ReferenceError-AdminLogin-is-not-defined.txt" }
+    ]
+  };
+  await priorityExecutor.summarizeFiles({ priorityScan }, { prompt: "Özetle" });
+
   assert.equal(activity.byRoot.Documents, 1);
   assert.equal(activity.byRoot.Downloads, 1);
   assert.equal(Object.values(activity.byDayDetails)[0].count, 2);
   assert.doesNotMatch(report, /notlar\.md/);
   assert.match(report, /Kısa Sonuç/);
+  assert.match(report, /Öne Çıkan Gelişmeler/);
+  assert.match(report, /Çalışmanın Dağılımı/);
+  assert.ok(prioritizedFiles.some((file) => file.name === "ReferenceError-AdminLogin-is-not-defined.txt"));
   assert.match(detailReport, /Problem veya istek/);
   assert.match(detailReport, /Yapılan işlem/);
   assert.match(detailReport, /Sonuç/);

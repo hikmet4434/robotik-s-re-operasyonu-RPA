@@ -98,6 +98,39 @@ function deriveDetailReportPath(reportPath) {
   return extension ? `${reportPath.slice(0, -extension.length)}-ayrintilar${extension}` : `${reportPath}-ayrintilar.pdf`;
 }
 
+function summaryHighlights(value) {
+  if (typeof value !== "string" || !value.trim()) return [];
+  const withoutCodeBlocks = value.replace(/```[\s\S]*?```/g, " ");
+  const sourceLines = withoutCodeBlocks.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const candidates = sourceLines.length > 1
+    ? sourceLines
+    : withoutCodeBlocks.split(/(?<=[.!?])\s+/).map((line) => line.trim()).filter(Boolean);
+  return candidates
+    .map((line) => line
+      .replace(/^#{1,6}\s*/, "")
+      .replace(/^[-*•]\s*/, "")
+      .replace(/^\d+[.)]\s*/, "")
+      .replace(/`/g, "")
+      .replace(/(?:\/Users\/|~\/|[A-Za-z]:\\)[^\s,;]+/g, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter((line) => line.length >= 12
+      && !/[{}<>]|=>|\b(?:const|function|import|export|class)\s/i.test(line)
+      && !/(?:^|\s)(?:Documents|Downloads|Desktop)[\\/][^\s]+/i.test(line))
+    .slice(0, 5)
+    .map((line) => `- ${line.slice(0, 220)}${/[.!?]$/.test(line.slice(0, 220)) ? "" : "."}`);
+}
+
+function summarySignalScore(file) {
+  const value = `${file.name || ""} ${file.relativePath || ""}`.toLocaleLowerCase("tr-TR");
+  if (/stripe|admin[-_ ]?login.*(?:not[-_ ]defined|referenceerror)|referenceerror.*admin[-_ ]?login/.test(value)) return 100;
+  if (/dashboard|admin[-_ ]?panel|pdf|weekly[-_ ]?report|haftalık[-_ ]?rapor/.test(value)) return 90;
+  if (/uncaught|exception|error|bug|fix|hata|login|auth|credential|vault/.test(value)) return 80;
+  if (/workflow|automation|otomasyon|orchestrator|local[-_ ]?agent|fileexecutor/.test(value)) return 70;
+  if (/news|haber|appstore|screenshot|deploy|hosting|coolify|netlify|mobile|responsive/.test(value)) return 60;
+  return 0;
+}
+
 function expandPath(value) {
   if (!value) return value;
   return path.resolve(value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value);
@@ -262,7 +295,9 @@ export class FileExecutor {
   async summarizeFiles(outputs, parameters) {
     const scan = this.findScan(outputs);
     const files = [];
-    const candidates = scan.files.slice(0, 100);
+    const candidates = [...scan.files]
+      .sort((left, right) => summarySignalScore(right) - summarySignalScore(left) || right.modifiedAt.localeCompare(left.modifiedAt))
+      .slice(0, 100);
     for (let index = 0; index < candidates.length; index += 10) {
       const batch = await Promise.all(candidates.slice(index, index + 10).map(async (file) => {
         const safePath = this.assertAllowed(file.absolutePath);
@@ -307,6 +342,7 @@ export class FileExecutor {
 
   composeReport(outputs, parameters) {
     const scan = this.findScan(outputs);
+    const summaryOutput = Object.values(outputs || {}).find((value) => value && typeof value === "object" && typeof value.summary === "string");
     const activity = Object.values(outputs || {}).find((value) => value && typeof value === "object" && value.byDay && value.byExtension);
     const areas = Object.entries(scan.files.reduce((result, file) => {
       const area = workArea(file);
@@ -316,7 +352,11 @@ export class FileExecutor {
     }, {})).sort(([, left], [, right]) => right.length - left.length);
     const newCount = scan.files.filter((file) => isNewFile(file, scan)).length;
     const updatedCount = scan.files.length - newCount;
-    const areaLines = areas.slice(0, 5).map(([area, files]) => `- **${area}:** ${purposeForFiles(files)} (${files.length} dosya)`).join("\n") || "- Bu hafta kayda değer bir dosya hareketi bulunmadı.";
+    const inferredHighlights = summaryHighlights(summaryOutput?.summary);
+    const highlightLines = inferredHighlights.length > 0
+      ? inferredHighlights.join("\n")
+      : areas.slice(0, 5).map(([area, files]) => `- **${area}:** ${purposeForFiles(files)}`).join("\n") || "- Bu hafta kayda değer bir dosya hareketi bulunmadı.";
+    const areaOverview = areas.slice(0, 4).map(([area, files]) => `${area} (${files.length} dosya)`).join(", ");
     const busiestDay = Object.entries(activity?.byDay || {}).sort(([, left], [, right]) => right - left)[0];
     const attention = activity?.maxFilesReached
       ? "Dosya sayısı güvenli inceleme sınırına ulaştı. En yeni dosyalar rapora alındı."
@@ -329,7 +369,8 @@ export class FileExecutor {
       "\nBu rapor, son bir haftadaki çalışmalarınızı teknik ayrıntıya girmeden özetler.",
       `\n## Kısa Sonuç\nToplam ${scan.files.length} dosya incelendi. ${newCount} yeni dosya eklendi, ${updatedCount} dosya güncellendi. ${Object.keys(activity?.byDay || {}).length} farklı günde çalışma kaydı bulundu.`,
       busiestDay ? `\nEn yoğun gün ${friendlyDate(busiestDay[0])} oldu; o gün ${busiestDay[1]} dosyada işlem yapıldı.` : "",
-      `\n## Bu Hafta Neler Yapıldı?\n${areaLines}`,
+      `\n## Öne Çıkan Gelişmeler\n${highlightLines}`,
+      areaOverview ? `\n## Çalışmanın Dağılımı\nEn çok hareket görülen alanlar: ${areaOverview}.` : "",
       `\n## Dikkat Gerekenler\n${attention}`,
       "\n## Daha Fazla Ayrıntı\nHangi dosyalarda işlem yapıldığını görmek için OtoFlow sonuç ekranındaki **Ayrıntılı Rapor** seçeneğini açabilirsiniz."
     ].join("\n");

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { extractDocumentTextWithGlmOcr, normalizeGeneratedPlan, resolveModelEndpoints, runWithModelFallback } from "../src/server/aiAutomation";
+import { buildHeuristicSummary, extractDocumentTextWithGlmOcr, normalizeGeneratedPlan, resolveModelEndpoints, runWithModelFallback } from "../src/server/aiAutomation";
 
 const request = {
   prompt: "Her hafta yeni dosyaları incele, özetle ve pazartesi rapor hazırla.",
@@ -77,6 +77,17 @@ const result = await runWithModelFallback(models, async (model) => {
 assert.equal(result.value, "ok");
 assert.equal(result.model, models[2]);
 assert.deepEqual(attempts, models);
+
+const plainSummary = buildHeuristicSummary([
+  { name: "stripe-checkout.ts", relativePath: "Documents/shop/payments/stripe-checkout.ts", size: 1200, modifiedAt: new Date().toISOString() },
+  { name: "AdminDashboard.tsx", relativePath: "Documents/shop/AdminDashboard.tsx", size: 1800, modifiedAt: new Date().toISOString() },
+  { name: "ReferenceError-AdminLogin-is-not-defined.txt", relativePath: "Documents/shop/tests/ReferenceError-AdminLogin-is-not-defined.txt", size: 900, modifiedAt: new Date().toISOString() },
+  { name: "weekly-pdf-report.ts", relativePath: "Documents/shop/reports/weekly-pdf-report.ts", size: 1400, modifiedAt: new Date().toISOString() }
+]);
+assert.match(plainSummary, /Stripe ödeme bağlantısı/);
+assert.match(plainSummary, /Yönetim ve takip ekranları/);
+assert.match(plainSummary, /PDF seçenekleriyle/);
+assert.match(plainSummary, /Yönetim giriş ekranındaki eksik tanım hatası giderildi/);
 
 await assert.rejects(
   runWithModelFallback(models, async () => {

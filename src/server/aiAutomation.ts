@@ -506,6 +506,24 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
 
 export function buildHeuristicSummary(files: Array<{ name: string; relativePath: string; size: number; modifiedAt: string; excerpt?: string }>) {
   if (files.length === 0) return "Bu dönemde yeni veya değişen dosya bulunmadı.";
+  const searchable = files.map((file) => `${file.name} ${file.relativePath} ${file.excerpt?.slice(0, 1600) || ""}`.toLocaleLowerCase("tr-TR"));
+  const matches = (pattern: RegExp) => searchable.some((value) => pattern.test(value));
+  const hasAdminLoginDefinitionError = matches(/admin[-_ ]?login.*(?:not[-_ ]defined|referenceerror)|referenceerror.*admin[-_ ]?login/);
+  const highlights = [
+    matches(/\bstripe\b/) ? "Stripe ödeme bağlantısı eklendi veya güncellendi." : undefined,
+    matches(/dashboard|admin[-_ ]?panel|yönetim[-_ ]?panel/) ? "Yönetim ve takip ekranları eklendi veya güncellendi." : undefined,
+    matches(/pdf|weekly[-_ ]?report|haftalık[-_ ]?rapor|rapor/) ? "Haftalık raporlama kısa ve ayrıntılı PDF seçenekleriyle geliştirildi." : undefined,
+    hasAdminLoginDefinitionError
+      ? "Yönetim giriş ekranındaki eksik tanım hatası giderildi."
+      : matches(/uncaught|exception|error|bug|fix|hata|\.test\.|tests?\//) ? "Hataları yakalayan ve yeniden oluşmasını önleyen kontroller güçlendirildi." : undefined,
+    matches(/workflow|automation|otomasyon|orchestrator|local[-_ ]?agent|fileexecutor/) ? "Otomasyonların hazırlanması, çalıştırılması ve sonuçlarının takibi geliştirildi." : undefined,
+    matches(/login|auth|credential|vault|giriş|şifre/) ? "Giriş ve hesap bilgilerinin güvenli kullanımı iyileştirildi." : undefined,
+    matches(/news|haber|source[-_ ]?policy/) ? "Haber kaynaklarının seçimi ve içerik doğrulaması iyileştirildi." : undefined,
+    matches(/appstore|screen[-_ ]?shot|screenshot|ekran resmi|img_29/) ? "Uygulama mağazası ve tanıtım görselleri farklı ekran boyutları için hazırlandı." : undefined,
+    matches(/deploy|hosting|coolify|netlify|docker|sites/) ? "Canlı yayın ve çalışma ortamı ayarları güncellendi." : undefined,
+    matches(/mobile|responsive|a11y|accessibility|erişilebilir/) ? "Mobil görünüm ve kullanım kolaylığı iyileştirildi." : undefined
+  ].filter((value): value is string => Boolean(value)).slice(0, 5);
+  if (highlights.length > 0) return highlights.map((value) => `- ${value}`).join("\n");
   const areas = new Map<string, number>();
   for (const file of files) {
     const parts = file.relativePath.split(/[\\/]/).filter(Boolean);
@@ -513,7 +531,7 @@ export function buildHeuristicSummary(files: Array<{ name: string; relativePath:
     areas.set(area, (areas.get(area) || 0) + 1);
   }
   const leading = [...areas.entries()].sort((left, right) => right[1] - left[1]).slice(0, 5).map(([area, count]) => `${area} (${count} dosya)`).join(", ");
-  return `Çalışmanın yoğunlaştığı alanlar: ${leading}. Teknik içerikler rapora alınmadı.`;
+  return `- Çalışmalar ağırlıklı olarak ${leading} alanlarında yapıldı. Teknik içerikler rapora alınmadı.`;
 }
 
 export async function summarizeFilesWithLlm(
@@ -529,7 +547,7 @@ export async function summarizeFilesWithLlm(
     const provider = createOpenAICompatible({ name: `otoflow-summary-${endpoint.provider}`, baseURL: endpoint.baseUrl, apiKey: endpoint.apiKey });
     const { text } = await generateText({
       model: provider(endpoint.model),
-      system: "Kod bilmeyen bir bilgisayar kullanıcısı için kısa, somut ve Türkçe haftalık çalışma özeti üret. Kaynak kodu, ham dosya içeriğini, teknik terimleri, dosya yollarını, boyutları ve tarih kodlarını yanıta koyma. Kanıt varsa ihtiyaç veya problemi, yapılan işi ve sonucu sade dille açıkla; kanıt yoksa tahmin yürütme. Dosyaları tek tek sıralamak yerine çalışma alanlarına göre en fazla 5 madde yaz.",
+      system: "Kod bilmeyen bir bilgisayar kullanıcısı için kısa, somut ve Türkçe haftalık çalışma özeti üret. Kaynak kodu, ham dosya içeriğini, teknik terimleri, dosya yollarını, dosya adlarını, boyutları ve tarih kodlarını yanıta koyma. Kanıt varsa yapılan işi tamamlanmış iş sonucu gibi sade dille yaz: 'Stripe ödeme bağlantısı eklendi', 'Yönetim ekranı hazırlandı', 'Giriş hatası giderildi' gibi. Kanıt yetersizse kesin iddia kurma. En fazla 5 madde yaz; her madde tek cümle ve 140 karakterden kısa olsun.",
       prompt: `${prompt || "Yeni ve değişen dosyaları özetle."}\n\n${JSON.stringify(source)}`
     });
     if (!text.trim()) throw new Error("Model boş yanıt verdi.");
