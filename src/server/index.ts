@@ -98,7 +98,12 @@ function cryptoSafeName(value: string) {
     .slice(0, 80) || "document";
 }
 
-const allowedOrigins = new Set((process.env.CORS_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean));
+const trustedUiOrigins = ["https://otoflow-ai-rpa.hiktan.chatgpt.site"];
+const allowedOrigins = new Set([...trustedUiOrigins, ...(process.env.CORS_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean)]);
+app.use((req, res, next) => {
+  if (req.header("access-control-request-private-network") === "true") res.setHeader("Access-Control-Allow-Private-Network", "true");
+  next();
+});
 app.use(cors((req, callback) => {
   const origin = req.header("origin");
   const forwardedHost = req.header("x-forwarded-host")?.split(",")[0].trim();

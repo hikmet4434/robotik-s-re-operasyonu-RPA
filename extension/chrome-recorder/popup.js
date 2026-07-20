@@ -18,8 +18,17 @@ async function saveState(partial) {
   await loadState();
 }
 
-async function createSession() {
+async function createSession(forceNew = false) {
   const apiBase = apiBaseInput.value.replace(/\/$/, "");
+  if (!forceNew) {
+    const recordingsResponse = await fetch(`${apiBase}/api/recordings`);
+    const recordings = await recordingsResponse.json().catch(() => []);
+    const recent = Array.isArray(recordings) ? recordings.find((item) => item.status === "recording" && Date.now() - new Date(item.updatedAt).getTime() < 10 * 60 * 1_000) : null;
+    if (recent) {
+      await saveState({ apiBase, sessionId: recent.id, recording: false });
+      return recent;
+    }
+  }
   const response = await fetch(`${apiBase}/api/recordings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,7 +57,7 @@ async function notifyActiveTab(recording) {
 
 createBtn.addEventListener("click", async () => {
   try {
-    const session = await createSession();
+    const session = await createSession(true);
     statusEl.textContent = `Yeni kayıt hazır: ${session.id}`;
   } catch (error) {
     statusEl.textContent = error.message;
@@ -59,7 +68,7 @@ toggleBtn.addEventListener("click", async () => {
   try {
     let state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
     if (!state.recording && !state.sessionId) {
-      await createSession();
+      await createSession(false);
       state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
     }
     const recording = !state.recording;

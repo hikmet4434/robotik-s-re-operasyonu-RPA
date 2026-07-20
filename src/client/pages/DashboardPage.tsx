@@ -173,19 +173,86 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [agentOnline, setAgentOnline] = useState(false);
+  const [localRecorderConnected, setLocalRecorderConnected] = useState(false);
+  const [usesLocalRecorder, setUsesLocalRecorder] = useState(false);
   const [desktopRecording, setDesktopRecording] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const isDesktopTask = /finder|masaüstü|dosya|klasör/i.test(`${title} ${goal} ${appName}`);
 
   useEffect(() => {
     api.localAgentHealth().then(() => setAgentOnline(true)).catch(() => setAgentOnline(false));
+    api.localRuntimeHealth().then(() => setLocalRecorderConnected(true)).catch(() => setLocalRecorderConnected(false));
   }, []);
 
+  useEffect(() => {
+    if (!localRecorderConnected) return;
+    let active = true;
+    const syncRecorder = async () => {
+      try {
+        const recordings = await api.localRecordings();
+        if (!active || recordings.length === 0) return;
+        const selected = session ? recordings.find((item) => item.id === session.id) : undefined;
+        const latest = recordings[0];
+        const current = !selected || new Date(latest.updatedAt).getTime() > new Date(selected.updatedAt).getTime() ? latest : selected;
+        if (!session || current.id !== session.id) {
+          setSession(current);
+          setUsesLocalRecorder(true);
+          setDraft(current.draft || null);
+          setMessage("Chrome Recorder bağlantısı bulundu. Yaptığınız işlemler sağdaki adım listesine canlı aktarılıyor.");
+        }
+        setEvents(current.events || []);
+      } catch {
+        if (active) setLocalRecorderConnected(false);
+      }
+    };
+    void syncRecorder();
+    const timer = window.setInterval(() => void syncRecorder(), 1_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [localRecorderConnected, session?.id]);
+
   async function startSession() {
-    const created = await api.createRecording({ title, goal, appName });
-    setSession(created);
+    const input = {
+      title: title.trim() || "Yeni iş kaydı",
+      goal: goal.trim() || `${title.trim() || "Bu iş"} adımlarını kaydet ve tekrar çalıştırılabilir otomasyona dönüştür.`,
+      appName: appName.trim() || "Chrome uygulaması"
+    };
+    let created: RecordingSession;
+    let local = false;
+    try {
+      created = await api.localCreateRecording(input);
+      setSession(created);
+      setUsesLocalRecorder(true);
+      setLocalRecorderConnected(true);
+      local = true;
+    } catch {
+      created = await api.createRecording(input);
+      setSession(created);
+      setUsesLocalRecorder(false);
+    }
     setEvents([]);
     setDraft(null);
-    setMessage("Kayıt oturumu başladı. Şimdi işi normal yapar gibi demo çalışma alanında ilerle.");
+    setMessage("Kayıt hazır. Chrome Recorder’dan Kaydı Başlat’a basın veya deneme alanında ilerleyin; adımlar sağda canlı görünecek.");
+    return { session: created, local };
+  }
+
+  async function startGuidedRecording() {
+    try {
+      const started = await startSession();
+      if (isDesktopTask) {
+        if (!agentOnline) {
+          setMessage("Bu bir Finder/masaüstü işi. Bilgisayar bağlantısını açtıktan sonra Masaüstünü Kaydet düğmesine basın.");
+          return;
+        }
+        await api.startDesktopRecording(started.session.id);
+        setDesktopRecording(true);
+        setUsesLocalRecorder(started.local);
+        setMessage("Finder kaydı başladı. Şimdi Finder’a geçip işlemi yapın; tamamlanınca buraya dönüp Masaüstünü Durdur’a basın.");
+        return;
+      }
+      setMessage("Tarayıcı işi hazır. Kaydetmek istediğiniz web sayfasını açıp Chrome’daki OtoFlow Recorder simgesinden Kaydı Başlat’a basın.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Kayıt başlatılamadı.");
+    }
   }
 
   async function capture(event: Omit<RecorderEvent, "id" | "ts">) {
@@ -193,7 +260,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
       setMessage("Önce kayıt oturumu başlat.");
       return;
     }
-    const saved = await api.addRecordingEvent(session.id, event);
+    const saved = usesLocalRecorder ? await api.localAddRecordingEvent(session.id, event) : await api.addRecordingEvent(session.id, event);
     setEvents((current) => [...current, saved]);
   }
 
@@ -217,7 +284,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
       setVideoUrl(URL.createObjectURL(blob));
       setScreenStatus("captured");
       try {
-        const updated = await api.uploadRecordingVideo(session.id, blob);
+        const updated = usesLocalRecorder ? await api.localUploadRecordingVideo(session.id, blob) : await api.uploadRecordingVideo(session.id, blob);
         setSession(updated);
         setMessage("Ekran kaydı iş oturumuna kaydedildi.");
       } catch (error) {
@@ -237,13 +304,13 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
     await capture({ type: "screen.stop", label: "Ekran kaydı durdu", target: "screen", appArea: "Recorder", value: "captured", selectorHint: "display-media" });
   }
 
-  async function startDesktopRecording() {
-    if (!session) {
+  async function startDesktopRecording(targetSession: RecordingSession | null = session) {
+    if (!targetSession) {
       setMessage("Masaüstü kaydı için önce iş kaydını başlat.");
       return;
     }
     try {
-      await api.startDesktopRecording(session.id);
+      await api.startDesktopRecording(targetSession.id);
       setDesktopRecording(true);
       setAgentOnline(true);
       setMessage("Masaüstü tıklama kaydı başladı. macOS Erişilebilirlik izni istenirse izin verin.");
@@ -257,7 +324,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
       await api.stopDesktopRecording();
       setDesktopRecording(false);
       if (session) {
-        const recordings = await api.recordings();
+        const recordings = usesLocalRecorder ? await api.localRecordings() : await api.recordings();
         const current = recordings.find((item) => item.id === session.id);
         if (current) setEvents(current.events);
       }
@@ -269,25 +336,27 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
 
   async function analyze() {
     if (!session) return;
-    const generated = await api.analyzeRecording(session.id);
+    const generated = usesLocalRecorder ? await api.localAnalyzeRecording(session.id) : await api.analyzeRecording(session.id);
     setDraft(generated);
     setMessage("AI analizi tamamlandı: iş adımları, değişkenler, onay kapıları ve alt otomasyonlar çıkarıldı.");
   }
 
   async function publish() {
     if (!draft) return;
-    await api.publishAutomationDraft(draft.id);
+    if (usesLocalRecorder) await api.localPublishAutomationDraft(draft.id);
+    else await api.publishAutomationDraft(draft.id);
     await refreshDashboard();
     setMessage("Taslak workflow olarak yayınlandı. Otomasyonlar sekmesinde çalıştırılabilir.");
   }
 
   async function saveDraft(nextDraft: AutomationDraft) {
-    const saved = await api.updateAutomationDraft(nextDraft.id, {
+    const body = {
       steps: nextDraft.steps,
       credentialId: nextDraft.credentialId,
       title: nextDraft.title,
       objective: nextDraft.objective
-    });
+    };
+    const saved = usesLocalRecorder ? await api.localUpdateAutomationDraft(nextDraft.id, body) : await api.updateAutomationDraft(nextDraft.id, body);
     setDraft(saved);
     setMessage("Adımlar, hesap profili ve onay kararları kaydedildi.");
   }
@@ -307,7 +376,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
             <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
               Önce işin adını ve amacını yazın. Kaydı başlattıktan sonra işlemi her zamanki gibi bir kez yapın.
             </p>
-            <div className="mt-3"><StatusPill value={agentOnline ? "local_agent_online" : "local_agent_offline"} /></div>
+            <div className="mt-3 flex flex-wrap items-center gap-2"><StatusPill value={agentOnline ? "local_agent_online" : "local_agent_offline"} />{desktopRecording ? <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-800">Masaüstü kaydı açık</span> : session ? <span className={`rounded-full px-3 py-1 text-xs font-bold ${events.length ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{events.length ? `${events.length} adım canlı alındı` : "İlk işlem bekleniyor"}</span> : null}</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="button-secondary" onClick={() => void startScreenRecording()} disabled={screenStatus === "recording"}>
@@ -324,9 +393,9 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
             <button className="button-secondary" onClick={() => void stopDesktopRecording()} disabled={!desktopRecording}>
               Masaüstünü Durdur
             </button>
-            <button className="button-primary" onClick={() => void startSession()}>
+            <button className="button-primary" onClick={() => void startGuidedRecording()} disabled={desktopRecording}>
               <Radio size={16} />
-              Adımları Kaydetmeye Başla
+              {isDesktopTask ? "Finder Kaydını Başlat" : "Adımları Kaydetmeye Başla"}
             </button>
           </div>
         </div>

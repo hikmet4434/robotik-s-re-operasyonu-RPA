@@ -114,6 +114,7 @@ function startNativeRecording(recordingSessionId) {
     nativeRecorder = undefined;
     activeRecordingSessionId = "";
   });
+  spawn("/usr/bin/osascript", ["-e", "display notification \"Finder veya masaüstündeki işlemi şimdi yapabilirsiniz.\" with title \"OtoFlow kaydı başladı\""], { stdio: "ignore" });
 }
 
 function stopNativeRecording() {
@@ -121,6 +122,7 @@ function stopNativeRecording() {
   nativeRecorder.kill("SIGTERM");
   nativeRecorder = undefined;
   activeRecordingSessionId = "";
+  spawn("/usr/bin/osascript", ["-e", "display notification \"Kaydedilen adımlar OtoFlow ekranına aktarıldı.\" with title \"OtoFlow kaydı tamamlandı\""], { stdio: "ignore" });
   return true;
 }
 

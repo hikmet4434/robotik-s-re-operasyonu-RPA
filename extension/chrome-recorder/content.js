@@ -1,11 +1,45 @@
 let recording = false;
+let recordedCount = 0;
+const indicatorId = "otoflow-recorder-indicator";
+
+function updateIndicator(errorMessage) {
+  document.getElementById(indicatorId)?.remove();
+  if (!recording && !errorMessage) return;
+  const indicator = document.createElement("div");
+  indicator.id = indicatorId;
+  indicator.setAttribute("data-otoflow-recorder", "true");
+  indicator.textContent = errorMessage || (recordedCount ? `OtoFlow • ${recordedCount} adım kaydedildi` : "OtoFlow • Kayıt açık");
+  Object.assign(indicator.style, {
+    position: "fixed",
+    zIndex: "2147483647",
+    top: "16px",
+    right: "16px",
+    borderRadius: "999px",
+    background: errorMessage ? "#b91c1c" : "#0f766e",
+    color: "#ffffff",
+    padding: "10px 14px",
+    fontFamily: "Inter, system-ui, sans-serif",
+    fontSize: "13px",
+    fontWeight: "800",
+    lineHeight: "1",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.28)",
+    pointerEvents: "none"
+  });
+  document.documentElement.appendChild(indicator);
+}
+
+function setRecording(next) {
+  recording = Boolean(next);
+  if (!recording) recordedCount = 0;
+  updateIndicator();
+}
 
 chrome.storage.local.get(["recording"], (state) => {
-  recording = Boolean(state.recording);
+  setRecording(state.recording);
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "OTOFLOW_RECORDING_STATE") recording = Boolean(message.recording);
+  if (message.type === "OTOFLOW_RECORDING_STATE") setRecording(message.recording);
 });
 
 function cssPath(element) {
@@ -38,7 +72,14 @@ function appArea() {
 
 function emit(payload) {
   if (!recording) return;
-  chrome.runtime.sendMessage({ type: "OTOFLOW_EVENT", payload });
+  chrome.runtime.sendMessage({ type: "OTOFLOW_EVENT", payload }, (response) => {
+    if (chrome.runtime.lastError || !response?.ok) {
+      updateIndicator("OtoFlow • Kayıt bağlantısı kesildi");
+      return;
+    }
+    recordedCount += 1;
+    updateIndicator();
+  });
 }
 
 document.addEventListener(
@@ -46,6 +87,7 @@ document.addEventListener(
   (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (target.closest(`#${indicatorId}`)) return;
     const rect = target.getBoundingClientRect();
     emit({
       type: "click",

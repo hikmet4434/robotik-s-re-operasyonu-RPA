@@ -37,6 +37,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+const localRuntimeBase = "http://127.0.0.1:4100";
+
+async function localRuntimeRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
+  const response = await fetch(`${localRuntimeBase}${path}`, {
+    ...init,
+    headers: {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...init?.headers
+    }
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Bilgisayar bağlantısı yanıt vermedi." }));
+    throw new Error(typeof error.error === "string" ? error.error : "Bilgisayar bağlantısı yanıt vermedi.");
+  }
+  return response.json() as Promise<T>;
+}
+
 const dashboardCollectionKeys = [
   "opportunities", "workflows", "queues", "queueItems", "jobs", "jobLogs", "approvals", "documents",
   "connectors", "credentialProfiles", "policies", "audit", "workers", "recordingSessions", "recorderEvents", "automationDrafts"
@@ -74,6 +92,21 @@ export const api = {
     return request<RecordingSession>(`/api/recordings/${id}/video`, { method: "POST", body: formData });
   },
   analyzeRecording: (id: string) => request<AutomationDraft>(`/api/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
+  localRuntimeHealth: () => localRuntimeRequest<{ ok: boolean; service: string }>("/api/health"),
+  localRecordings: () => localRuntimeRequest<Array<RecordingSession & { events: RecorderEvent[]; draft?: AutomationDraft }>>("/api/recordings"),
+  localCreateRecording: (body: { title: string; goal: string; appName: string }) =>
+    localRuntimeRequest<RecordingSession>("/api/recordings", { method: "POST", body: JSON.stringify(body) }),
+  localAddRecordingEvent: (id: string, body: Omit<RecorderEvent, "id" | "ts">) =>
+    localRuntimeRequest<RecorderEvent>(`/api/recordings/${id}/events`, { method: "POST", body: JSON.stringify(body) }),
+  localUploadRecordingVideo: (id: string, video: Blob) => {
+    const formData = new FormData();
+    formData.append("video", video, `screen-${id}.webm`);
+    return localRuntimeRequest<RecordingSession>(`/api/recordings/${id}/video`, { method: "POST", body: formData });
+  },
+  localAnalyzeRecording: (id: string) => localRuntimeRequest<AutomationDraft>(`/api/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
+  localUpdateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
+    localRuntimeRequest<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  localPublishAutomationDraft: (id: string) => localRuntimeRequest<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),
   updateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
     request<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   publishAutomationDraft: (id: string) => request<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),

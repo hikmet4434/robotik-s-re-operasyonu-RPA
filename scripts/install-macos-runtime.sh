@@ -58,6 +58,7 @@ create_plist "$SERVER_PLIST" "$SERVER_LABEL" "runtime" "$NODE_BIN" "$TSX_CLI" "$
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:SAAS_DATABASE_PATH string $ROOT_DIR/data/otoflow-saas.sqlite" "$SERVER_PLIST"
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:DATABASE_PATH string $ROOT_DIR/data/otoflow.sqlite" "$SERVER_PLIST"
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_AGENT_TOKEN string $AGENT_TOKEN" "$SERVER_PLIST"
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:CORS_ORIGINS string https://otoflow-ai-rpa.hiktan.chatgpt.site" "$SERVER_PLIST"
 
 AGENT_PLIST="$LAUNCH_DIR/$AGENT_LABEL.plist"
 create_plist "$AGENT_PLIST" "$AGENT_LABEL" "agent" "$NODE_BIN" "$ROOT_DIR/agents/local-agent/src/index.js"
