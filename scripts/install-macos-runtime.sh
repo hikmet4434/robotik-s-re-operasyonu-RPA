@@ -64,7 +64,7 @@ create_plist "$AGENT_PLIST" "$AGENT_LABEL" "agent" "$NODE_BIN" "$ROOT_DIR/agents
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_API_BASE string http://127.0.0.1:4100" "$AGENT_PLIST"
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_AGENT_TOKEN string $AGENT_TOKEN" "$AGENT_PLIST"
 /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_ALLOWED_PATHS string $HOME/Documents,$HOME/Downloads,$HOME/Desktop" "$AGENT_PLIST"
-/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_UI_ORIGINS string http://localhost:5173,http://127.0.0.1:5173,http://localhost:4100,http://127.0.0.1:4100" "$AGENT_PLIST"
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OTOFLOW_UI_ORIGINS string http://localhost:5173,http://127.0.0.1:5173,http://localhost:4100,http://127.0.0.1:4100,https://otoflow-ai-rpa.hiktan.chatgpt.site" "$AGENT_PLIST"
 
 launchctl bootstrap "gui/$UID" "$SERVER_PLIST"
 launchctl bootstrap "gui/$UID" "$AGENT_PLIST"

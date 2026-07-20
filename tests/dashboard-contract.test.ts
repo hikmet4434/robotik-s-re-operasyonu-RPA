@@ -38,5 +38,6 @@ const agentSource = await fs.readFile(new URL("../agents/local-agent/src/index.j
 assert.match(agentSource, /req\.url === "\/reports"/);
 assert.match(agentSource, /Access-Control-Allow-Private-Network/);
 assert.match(agentSource, /fs\.createReadStream\(reportPath\)\.pipe\(res\)/);
+assert.match(agentSource, /https:\/\/otoflow-ai-rpa\.hiktan\.chatgpt\.site/);
 
 console.log(JSON.stringify({ ok: true, normalizedCollections: 4, notificationTarget: "/approvals", preparedFilesNavigation: true, localReportBridge: true }));

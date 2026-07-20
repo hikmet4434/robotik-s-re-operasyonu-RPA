@@ -14,7 +14,9 @@ const sessionId = process.env.OTOFLOW_RECORDING_SESSION_ID || "";
 const agentToken = process.env.OTOFLOW_AGENT_TOKEN || "otoflow-local-dev-agent";
 const port = Number(process.env.OTOFLOW_LOCAL_AGENT_PORT || 4687);
 const reportsDirectory = path.resolve(process.env.OTOFLOW_REPORTS_DIRECTORY || path.join(os.homedir(), "Documents", "OtoFlow Raporları"));
-const allowedUiOrigins = new Set((process.env.OTOFLOW_UI_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4100,http://127.0.0.1:4100,https://otoflow-ai-rpa.hiktan.chatgpt.site").split(",").map((value) => value.trim()).filter(Boolean));
+const defaultUiOrigins = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4100", "http://127.0.0.1:4100", "https://otoflow-ai-rpa.hiktan.chatgpt.site"];
+const configuredUiOrigins = (process.env.OTOFLOW_UI_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean);
+const allowedUiOrigins = new Set([...defaultUiOrigins, ...configuredUiOrigins]);
 const browser = new BrowserExecutor();
 const desktop = new DesktopExecutor();
 const files = new FileExecutor(async (fileItems, prompt) => {
