@@ -180,8 +180,7 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
   const isDesktopTask = /finder|masaüstü|dosya|klasör/i.test(`${title} ${goal} ${appName}`);
 
   useEffect(() => {
-    api.localAgentHealth().then(() => setAgentOnline(true)).catch(() => setAgentOnline(false));
-    api.localRuntimeHealth().then(() => setLocalRecorderConnected(true)).catch(() => setLocalRecorderConnected(false));
+    api.localAgentHealth().then(() => { setAgentOnline(true); setLocalRecorderConnected(true); }).catch(() => { setAgentOnline(false); setLocalRecorderConnected(false); });
   }, []);
 
   useEffect(() => {
@@ -192,13 +191,17 @@ function RecorderStudio({ data, refreshDashboard }: { data: SaasDashboard; refre
         const recordings = await api.localRecordings();
         if (!active || recordings.length === 0) return;
         const selected = session ? recordings.find((item) => item.id === session.id) : undefined;
-        const latest = recordings[0];
+        const latest = recordings.reduce((mostRecent, candidate) =>
+          new Date(candidate.updatedAt).getTime() > new Date(mostRecent.updatedAt).getTime() ? candidate : mostRecent,
+        );
         const current = !selected || new Date(latest.updatedAt).getTime() > new Date(selected.updatedAt).getTime() ? latest : selected;
         if (!session || current.id !== session.id) {
           setSession(current);
           setUsesLocalRecorder(true);
           setDraft(current.draft || null);
-          setMessage("Chrome Recorder bağlantısı bulundu. Yaptığınız işlemler sağdaki adım listesine canlı aktarılıyor.");
+          setMessage(current.events?.length
+            ? `${current.events.length} kayıtlı adım bulundu ve sağdaki listeye geri getirildi.`
+            : "Chrome Recorder bağlantısı bulundu. Yaptığınız işlemler sağdaki adım listesine canlı aktarılıyor.");
         }
         setEvents(current.events || []);
       } catch {

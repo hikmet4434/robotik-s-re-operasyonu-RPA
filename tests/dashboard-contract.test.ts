@@ -61,8 +61,8 @@ assert.match(recorderPopup, /Kayıt için uygulama girişi gerekmez/);
 assert.match(recorderPopup, /id="toggle" class="primary">Kaydı Başlat/);
 
 const recorderPopupScript = await fs.readFile(new URL("../extension/chrome-recorder/popup.js", import.meta.url), "utf8");
-assert.match(recorderPopupScript, /if \(!state\.recording && !state\.sessionId\)/);
 assert.match(recorderPopupScript, /await createSession\(false\)/);
+assert.match(recorderPopupScript, /if \(!state\.recording\) \{/);
 assert.match(recorderPopupScript, /Date\.now\(\) - new Date\(item\.updatedAt\)\.getTime\(\) < 10 \* 60 \* 1_000/);
 
 const recorderContentScript = await fs.readFile(new URL("../extension/chrome-recorder/content.js", import.meta.url), "utf8");
@@ -80,5 +80,14 @@ assert.match(serverSource, /https:\/\/otoflow-ai-rpa\.hiktan\.chatgpt\.site/);
 
 assert.match(agentSource, /OtoFlow kaydı başladı/);
 assert.match(agentSource, /OtoFlow kaydı tamamlandı/);
+assert.match(agentSource, /req\.url === "\/runtime\/recordings"/);
 
-console.log(JSON.stringify({ ok: true, normalizedCollections: 4, notificationTarget: "/approvals", preparedFilesNavigation: true, localReportBridge: true, recorderDownload: true, oneClickRecorder: true, liveRecorderBridge: true, recorderIndicator: true, desktopTaskAutostart: true }));
+const clientApiSource = await fs.readFile(new URL("../src/client/api.ts", import.meta.url), "utf8");
+assert.match(clientApiSource, /localAgentRequest<Array<RecordingSession/);
+assert.match(clientApiSource, /"\/runtime\/recordings"/);
+
+const dashboardPageSource = await fs.readFile(new URL("../src/client/pages/DashboardPage.tsx", import.meta.url), "utf8");
+assert.match(dashboardPageSource, /recordings\.reduce/);
+assert.match(dashboardPageSource, /kayıtlı adım bulundu ve sağdaki listeye geri getirildi/);
+
+console.log(JSON.stringify({ ok: true, normalizedCollections: 4, notificationTarget: "/approvals", preparedFilesNavigation: true, localReportBridge: true, recorderDownload: true, oneClickRecorder: true, liveRecorderBridge: true, recorderIndicator: true, desktopTaskAutostart: true, activeSessionSync: true }));

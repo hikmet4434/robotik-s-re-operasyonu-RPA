@@ -38,6 +38,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const localRuntimeBase = "http://127.0.0.1:4100";
+const localAgentBase = "http://127.0.0.1:4687";
 
 async function localRuntimeRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData;
@@ -51,6 +52,18 @@ async function localRuntimeRequest<T>(path: string, init?: RequestInit): Promise
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Bilgisayar bağlantısı yanıt vermedi." }));
     throw new Error(typeof error.error === "string" ? error.error : "Bilgisayar bağlantısı yanıt vermedi.");
+  }
+  return response.json() as Promise<T>;
+}
+
+async function localAgentRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${localAgentBase}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init?.headers }
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Bilgisayar ajanı yanıt vermedi." }));
+    throw new Error(typeof error.error === "string" ? error.error : "Bilgisayar ajanı yanıt vermedi.");
   }
   return response.json() as Promise<T>;
 }
@@ -93,20 +106,20 @@ export const api = {
   },
   analyzeRecording: (id: string) => request<AutomationDraft>(`/api/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
   localRuntimeHealth: () => localRuntimeRequest<{ ok: boolean; service: string }>("/api/health"),
-  localRecordings: () => localRuntimeRequest<Array<RecordingSession & { events: RecorderEvent[]; draft?: AutomationDraft }>>("/api/recordings"),
+  localRecordings: () => localAgentRequest<Array<RecordingSession & { events: RecorderEvent[]; draft?: AutomationDraft }>>("/runtime/recordings"),
   localCreateRecording: (body: { title: string; goal: string; appName: string }) =>
-    localRuntimeRequest<RecordingSession>("/api/recordings", { method: "POST", body: JSON.stringify(body) }),
+    localAgentRequest<RecordingSession>("/runtime/recordings", { method: "POST", body: JSON.stringify(body) }),
   localAddRecordingEvent: (id: string, body: Omit<RecorderEvent, "id" | "ts">) =>
-    localRuntimeRequest<RecorderEvent>(`/api/recordings/${id}/events`, { method: "POST", body: JSON.stringify(body) }),
+    localAgentRequest<RecorderEvent>(`/runtime/recordings/${id}/events`, { method: "POST", body: JSON.stringify(body) }),
   localUploadRecordingVideo: (id: string, video: Blob) => {
     const formData = new FormData();
     formData.append("video", video, `screen-${id}.webm`);
     return localRuntimeRequest<RecordingSession>(`/api/recordings/${id}/video`, { method: "POST", body: formData });
   },
-  localAnalyzeRecording: (id: string) => localRuntimeRequest<AutomationDraft>(`/api/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
+  localAnalyzeRecording: (id: string) => localAgentRequest<AutomationDraft>(`/runtime/recordings/${id}/analyze`, { method: "POST", body: "{}" }),
   localUpdateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
-    localRuntimeRequest<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  localPublishAutomationDraft: (id: string) => localRuntimeRequest<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),
+    localAgentRequest<AutomationDraft>(`/runtime/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  localPublishAutomationDraft: (id: string) => localAgentRequest<Workflow>(`/runtime/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),
   updateAutomationDraft: (id: string, body: { steps: WorkflowStep[]; credentialId?: string; title?: string; objective?: string }) =>
     request<AutomationDraft>(`/api/automation-drafts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   publishAutomationDraft: (id: string) => request<Workflow>(`/api/automation-drafts/${id}/publish`, { method: "POST", body: "{}" }),

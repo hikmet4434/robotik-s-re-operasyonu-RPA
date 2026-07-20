@@ -67,7 +67,7 @@ createBtn.addEventListener("click", async () => {
 toggleBtn.addEventListener("click", async () => {
   try {
     let state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
-    if (!state.recording && !state.sessionId) {
+    if (!state.recording) {
       await createSession(false);
       state = await chrome.storage.local.get(["apiBase", "sessionId", "recording"]);
     }

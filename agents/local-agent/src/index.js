@@ -183,7 +183,7 @@ function startServer() {
     if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
     if (req.headers["access-control-request-private-network"] === "true") res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (req.method === "OPTIONS") {
-      res.writeHead(204, { "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" });
+      res.writeHead(204, { "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS" });
       res.end();
       return;
     }
@@ -206,6 +206,27 @@ function startServer() {
       }
       if (req.url === "/record/stop" && req.method === "POST") {
         jsonResponse(res, 200, { ok: true, stopped: stopNativeRecording() });
+        return;
+      }
+      if (req.url === "/runtime/recordings" && req.method === "GET") {
+        jsonResponse(res, 200, await apiRequest("/api/recordings"));
+        return;
+      }
+      if (req.url === "/runtime/recordings" && req.method === "POST") {
+        const body = await readBody(req);
+        jsonResponse(res, 201, await apiRequest("/api/recordings", { method: "POST", body: JSON.stringify(body) }));
+        return;
+      }
+      let match = req.url?.match(/^\/runtime\/recordings\/([^/]+)\/(events|analyze)$/);
+      if (match && req.method === "POST") {
+        const body = await readBody(req);
+        jsonResponse(res, match[2] === "events" ? 201 : 200, await apiRequest(`/api/recordings/${encodeURIComponent(match[1])}/${match[2]}`, { method: "POST", body: JSON.stringify(body) }));
+        return;
+      }
+      match = req.url?.match(/^\/runtime\/automation-drafts\/([^/]+)(\/publish)?$/);
+      if (match && ((match[2] && req.method === "POST") || (!match[2] && req.method === "PATCH"))) {
+        const body = await readBody(req);
+        jsonResponse(res, 200, await apiRequest(`/api/automation-drafts/${encodeURIComponent(match[1])}${match[2] || ""}`, { method: req.method, body: JSON.stringify(body) }));
         return;
       }
       if (req.url === "/reports" && req.method === "GET") {
