@@ -50,6 +50,14 @@ export function normalizeSaasDashboard(payload: SaasDashboard): SaasDashboard {
   return normalized;
 }
 
+export type LocalPreparedReport = {
+  name: string;
+  label: string;
+  description: string;
+  sizeBytes: number;
+  updatedAt: string;
+};
+
 export const api = {
   dashboard: async () => normalizeSaasDashboard(await request<SaasDashboard>("/api/dashboard")),
   legacyDashboard: () => request<DashboardPayload>("/api/legacy/dashboard"),
@@ -118,6 +126,12 @@ export const api = {
     if (!response.ok) throw new Error("Yerel ajan çevrimdışı.");
     return response.json() as Promise<{ ok: boolean; platform: string; recording: boolean; apiBase: string }>;
   },
+  localPreparedReports: async () => {
+    const response = await fetch("http://127.0.0.1:4687/reports");
+    if (!response.ok) throw new Error("Hazırlanan dosyalar okunamadı.");
+    return response.json() as Promise<{ directoryLabel: string; reports: LocalPreparedReport[] }>;
+  },
+  localPreparedReportUrl: (name: string) => `http://127.0.0.1:4687/reports/${encodeURIComponent(name)}`,
   startDesktopRecording: (sessionId: string) => fetch("http://127.0.0.1:4687/record/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }).then(async (response) => {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Masaüstü kaydı başlatılamadı.");

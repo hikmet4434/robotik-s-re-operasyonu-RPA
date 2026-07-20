@@ -1,4 +1,6 @@
 import http from "node:http";
+import fs from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +13,7 @@ const apiBase = (process.env.OTOFLOW_API_BASE || "http://localhost:4100").replac
 const sessionId = process.env.OTOFLOW_RECORDING_SESSION_ID || "";
 const agentToken = process.env.OTOFLOW_AGENT_TOKEN || "otoflow-local-dev-agent";
 const port = Number(process.env.OTOFLOW_LOCAL_AGENT_PORT || 4687);
+const reportsDirectory = path.resolve(process.env.OTOFLOW_REPORTS_DIRECTORY || path.join(os.homedir(), "Documents", "OtoFlow Raporları"));
 const allowedUiOrigins = new Set((process.env.OTOFLOW_UI_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4100,http://127.0.0.1:4100,https://otoflow-ai-rpa.hiktan.chatgpt.site").split(",").map((value) => value.trim()).filter(Boolean));
 const browser = new BrowserExecutor();
 const desktop = new DesktopExecutor();
@@ -138,6 +141,34 @@ function readBody(req) {
   });
 }
 
+async function listPreparedReports() {
+  const entries = await readdir(reportsDirectory, { withFileTypes: true }).catch((error) => {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  });
+  const reports = await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.toLocaleLowerCase("tr-TR").endsWith(".pdf"))
+    .map(async (entry) => {
+      const info = await stat(path.join(reportsDirectory, entry.name));
+      const detailed = /-ayrintilar\.pdf$/i.test(entry.name);
+      return {
+        name: entry.name,
+        label: detailed ? "Ayrıntılı PDF" : "Kısa PDF",
+        description: detailed ? "Dosyalarda yapılan işlemlerin sade açıklaması" : "Tek sayfalık, kolay okunur haftalık özet",
+        sizeBytes: info.size,
+        updatedAt: info.mtime.toISOString()
+      };
+    }));
+  return reports.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function safeReportPath(fileName) {
+  const decoded = decodeURIComponent(fileName || "");
+  if (decoded !== path.basename(decoded) || !decoded.toLocaleLowerCase("tr-TR").endsWith(".pdf")) return null;
+  const resolved = path.resolve(reportsDirectory, decoded);
+  return path.dirname(resolved) === reportsDirectory ? resolved : null;
+}
+
 function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = req.headers.origin;
@@ -146,6 +177,7 @@ function startServer() {
       return;
     }
     if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+    if (req.headers["access-control-request-private-network"] === "true") res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (req.method === "OPTIONS") {
       res.writeHead(204, { "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" });
       res.end();
@@ -170,6 +202,29 @@ function startServer() {
       }
       if (req.url === "/record/stop" && req.method === "POST") {
         jsonResponse(res, 200, { ok: true, stopped: stopNativeRecording() });
+        return;
+      }
+      if (req.url === "/reports" && req.method === "GET") {
+        jsonResponse(res, 200, { directoryLabel: "Belgeler → OtoFlow Raporları", reports: await listPreparedReports() });
+        return;
+      }
+      if (req.method === "GET" && req.url?.startsWith("/reports/")) {
+        const reportPath = safeReportPath(req.url.slice("/reports/".length));
+        if (!reportPath) {
+          jsonResponse(res, 400, { error: "Geçersiz rapor dosyası." });
+          return;
+        }
+        const info = await stat(reportPath).catch(() => null);
+        if (!info?.isFile()) {
+          jsonResponse(res, 404, { error: "PDF raporu bu bilgisayarda bulunamadı." });
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "application/pdf",
+          "Content-Length": info.size,
+          "Content-Disposition": `inline; filename="${path.basename(reportPath).replace(/[^a-zA-Z0-9._-]/g, "-")}"`
+        });
+        fs.createReadStream(reportPath).pipe(res);
         return;
       }
       jsonResponse(res, 404, { error: "not_found" });

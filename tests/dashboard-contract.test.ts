@@ -31,5 +31,12 @@ assert.match(dashboardSource, /Hazırlanan dosyaları görün/);
 assert.match(dashboardSource, /Belgeler → OtoFlow Raporları/);
 assert.match(dashboardSource, /Tek sayfalık, kolay okunur haftalık özet/);
 assert.match(dashboardSource, /Dosyalarda yapılan işlemlerin sade açıklaması/);
+assert.match(dashboardSource, /Bilgisayarınızda hazır olan dosyalar/);
+assert.match(dashboardSource, /api\.localPreparedReports\(\)/);
 
-console.log(JSON.stringify({ ok: true, normalizedCollections: 4, notificationTarget: "/approvals", preparedFilesNavigation: true }));
+const agentSource = await fs.readFile(new URL("../agents/local-agent/src/index.js", import.meta.url), "utf8");
+assert.match(agentSource, /req\.url === "\/reports"/);
+assert.match(agentSource, /Access-Control-Allow-Private-Network/);
+assert.match(agentSource, /fs\.createReadStream\(reportPath\)\.pipe\(res\)/);
+
+console.log(JSON.stringify({ ok: true, normalizedCollections: 4, notificationTarget: "/approvals", preparedFilesNavigation: true, localReportBridge: true }));

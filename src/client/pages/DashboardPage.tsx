@@ -44,7 +44,7 @@ import type {
   Workflow,
   WorkflowStep
 } from "../../shared/saasTypes";
-import { api } from "../api";
+import { api, type LocalPreparedReport } from "../api";
 import { formatDate, formatNumber } from "../utils";
 import { useExperienceMode } from "../ui/ExperienceMode";
 import { AiAutomationBuilder } from "./AiAutomationBuilder";
@@ -880,6 +880,18 @@ function Workflows({
 
 function Jobs({ data, refresh, mode }: { data: SaasDashboard; refresh: () => Promise<void>; mode: "simple" | "advanced" }) {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(data.jobs[0]?.id ?? null);
+  const [localReports, setLocalReports] = useState<LocalPreparedReport[]>([]);
+  const [localReportsChecked, setLocalReportsChecked] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "simple") return;
+    let active = true;
+    api.localPreparedReports()
+      .then((payload) => { if (active) setLocalReports(payload.reports); })
+      .catch(() => { if (active) setLocalReports([]); })
+      .finally(() => { if (active) setLocalReportsChecked(true); });
+    return () => { active = false; };
+  }, [mode]);
 
   async function cancel(job: Job) {
     await api.cancelJob(job.id);
@@ -921,7 +933,25 @@ function Jobs({ data, refresh, mode }: { data: SaasDashboard; refresh: () => Pro
           </div>
         </section>
 
-        {preparedReports.length ? preparedReports.map((job) => {
+        {localReports.length ? (
+          <section className="panel overflow-hidden">
+            <div className="border-b border-line px-5 py-4">
+              <div className="flex items-center justify-between gap-3"><div><h3 className="font-bold">Bilgisayarınızda hazır olan dosyalar</h3><p className="muted mt-1">Dosyaya dokunduğunuzda PDF doğrudan açılır.</p></div><span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">{localReports.length} dosya</span></div>
+            </div>
+            <div className="grid gap-3 p-5 md:grid-cols-2">
+              {localReports.map((report) => (
+                <a key={report.name} className={`rounded-lg border p-4 transition hover:shadow-sm ${report.label === "Kısa PDF" ? "border-teal-200 bg-teal-50 hover:border-teal-400" : "border-line bg-white hover:border-slate-400"}`} href={api.localPreparedReportUrl(report.name)} target="_blank" rel="noreferrer">
+                  <div className="flex items-start gap-3">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white ${report.label === "Kısa PDF" ? "text-brand" : "text-slate-700"}`}><FileSearch size={20} /></div>
+                    <div className="min-w-0"><div className="font-bold text-ink">{report.label}</div><div className="mt-1 text-sm leading-5 text-muted">{report.description}</div><div className="mt-2 truncate text-xs text-muted">{report.name}</div><div className="mt-3 text-sm font-bold text-brand">Dosyayı Aç →</div></div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {!localReports.length && preparedReports.length ? preparedReports.map((job) => {
           const result = friendlyJobResult(job)!;
           const workflowName = data.workflows.find((workflow) => workflow.id === job.workflowId)?.name;
           return (
@@ -956,13 +986,13 @@ function Jobs({ data, refresh, mode }: { data: SaasDashboard; refresh: () => Pro
               {result.generatedAt || job.completedAt ? <div className="border-t border-line px-5 py-3 text-xs text-muted">Hazırlanma tarihi: {formatDate(result.generatedAt || job.completedAt!)}</div> : null}
             </section>
           );
-        }) : (
+        }) : !localReports.length && localReportsChecked ? (
           <section className="panel p-6 text-center">
             <FileSearch className="mx-auto text-slate-300" size={36} />
-            <h3 className="mt-3 font-bold">Henüz hazırlanmış dosya yok</h3>
-            <p className="muted mt-1">Bir rapor otomasyonu tamamlandığında dosyalar otomatik olarak burada görünecek.</p>
+            <h3 className="mt-3 font-bold">Bilgisayarınızdaki dosyalara ulaşılamadı</h3>
+            <p className="muted mt-1">OtoFlow Yerel Ajanı açık olduğunda hazırlanan PDF’ler burada otomatik görünür.</p>
           </section>
-        )}
+        ) : null}
       </div>
     );
   }
