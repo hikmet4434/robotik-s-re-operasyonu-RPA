@@ -207,12 +207,15 @@ export interface WorkflowStep {
     directoryPath?: string;
     directoryPaths?: string[];
     reportPath?: string;
+    detailReportPath?: string;
+    includeDetailedReport?: boolean;
     lookbackDays?: number;
     extensions?: string[];
     recursive?: boolean;
     maxFiles?: number;
     prompt?: string;
     reportTitle?: string;
+    detailReportTitle?: string;
   };
 }
 

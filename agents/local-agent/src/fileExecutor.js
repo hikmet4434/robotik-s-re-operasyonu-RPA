@@ -8,6 +8,96 @@ const readableExtensions = new Set([".txt", ".md", ".json", ".csv", ".tsv", ".lo
 const ignoredDirectoryNames = new Set(["node_modules", ".git", ".next", "dist", "build", "coverage", "target", "vendor", ".venv", "venv", "__pycache__", "browser-profile", "Cache", "Caches", "Code Cache", "GPUCache", "OtoFlow Raporları"]);
 const ignoredTechnicalExtensions = new Set([".sqlite", ".sqlite-wal", ".sqlite-shm", ".db", ".db-wal", ".db-shm", ".pma", ".journal", ".tsbuildinfo"]);
 
+const fileTypeGroups = {
+  application: new Set([".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".swift", ".py", ".java", ".sh"]),
+  document: new Set([".md", ".txt", ".pdf", ".doc", ".docx", ".rtf"]),
+  data: new Set([".csv", ".tsv", ".xls", ".xlsx", ".json", ".xml", ".yaml", ".yml"]),
+  image: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]),
+  archive: new Set([".zip", ".rar", ".7z", ".tar", ".gz"])
+};
+
+const fileTypeLabels = {
+  application: "Program çalışma dosyası",
+  configuration: "Program ayar dosyası",
+  document: "Belge veya not",
+  data: "Tablo veya veri dosyası",
+  image: "Görsel",
+  archive: "Arşiv dosyası",
+  other: "Diğer dosya"
+};
+
+function fileType(file) {
+  const extension = (file.extension || path.extname(file.name)).toLowerCase();
+  if (/(^|[-_.])(config|settings?|package|tsconfig|vite|tailwind|postcss)([-_.]|$)/i.test(file.name)) return "configuration";
+  return Object.entries(fileTypeGroups).find(([, extensions]) => extensions.has(extension))?.[0] || "other";
+}
+
+function friendlyDate(value) {
+  return new Date(`${value}T12:00:00`).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function friendlyRoot(value) {
+  return { Documents: "Belgeler", Downloads: "İndirilenler", Desktop: "Masaüstü" }[value] || value || "Diğer";
+}
+
+function workArea(file) {
+  const parts = file.relativePath.split(/[\\/]/).filter(Boolean);
+  if (parts.length > 2) return parts[1];
+  return friendlyRoot(parts[0] || file.root);
+}
+
+function isNewFile(file, scan) {
+  const cutoff = new Date(scan.scannedAt).getTime() - scan.lookbackDays * 24 * 60 * 60 * 1000;
+  return Number.isFinite(new Date(file.createdAt).getTime()) && new Date(file.createdAt).getTime() >= cutoff;
+}
+
+function purposeForFiles(files) {
+  const counts = files.reduce((result, file) => {
+    const type = fileType(file);
+    result[type] = (result[type] || 0) + 1;
+    return result;
+  }, {});
+  const dominant = Object.entries(counts).sort(([, left], [, right]) => right - left)[0]?.[0] || "other";
+  return {
+    application: "Uygulama üzerinde geliştirme, bakım veya düzeltme çalışması yapıldı.",
+    configuration: "Programın çalışma ayarları oluşturuldu veya güncellendi.",
+    document: "Belge, not veya rapor içerikleri hazırlandı ve güncellendi.",
+    data: "Tablo ve veri kayıtları yenilendi veya yeni veriler eklendi.",
+    image: "Görsel dosyalar hazırlandı, düzenlendi veya çalışma alanına eklendi.",
+    archive: "Dosyalar paketlendi veya toplu halde çalışma alanına eklendi.",
+    other: "Bu çalışma alanındaki dosyalar oluşturuldu veya güncellendi."
+  }[dominant];
+}
+
+function fileResult(file, change) {
+  const type = fileType(file);
+  if (change === "Yeni eklendi") {
+    return {
+      application: "Programın ilgili bölümünü çalıştıran yeni bir dosya eklendi.",
+      configuration: "Program için yeni bir ayar dosyası eklendi.",
+      document: "Yeni bir belge veya not hazırlandı.",
+      data: "Yeni bir tablo veya veri kaydı eklendi.",
+      image: "Yeni bir görsel çalışma alanına eklendi.",
+      archive: "Yeni bir toplu dosya paketi eklendi.",
+      other: "Çalışma alanına yeni bir dosya eklendi."
+    }[type];
+  }
+  return {
+    application: "Programın ilgili bölümünde değişiklik yapıldı.",
+    configuration: "Programın çalışma ayarları değiştirildi.",
+    document: "Belge veya not içeriği güncellendi.",
+    data: "Tablo veya veri kayıtları güncellendi.",
+    image: "Görsel dosya üzerinde değişiklik yapıldı.",
+    archive: "Toplu dosya paketi yenilendi.",
+    other: "Dosyada değişiklik yapıldı."
+  }[type];
+}
+
+function deriveDetailReportPath(reportPath) {
+  const extension = path.extname(reportPath);
+  return extension ? `${reportPath.slice(0, -extension.length)}-ayrintilar${extension}` : `${reportPath}-ayrintilar.pdf`;
+}
+
 function expandPath(value) {
   if (!value) return value;
   return path.resolve(value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value);
@@ -185,7 +275,7 @@ export class FileExecutor {
             excerpt = undefined;
           }
         }
-        return { name: file.name, relativePath: file.relativePath, size: file.size, modifiedAt: file.modifiedAt, excerpt };
+        return { name: file.name, relativePath: file.relativePath, extension: file.extension, size: file.size, modifiedAt: file.modifiedAt, createdAt: file.createdAt, excerpt };
       }));
       files.push(...batch);
     }
@@ -216,24 +306,66 @@ export class FileExecutor {
   }
 
   composeReport(outputs, parameters) {
-    const summaryOutput = Object.values(outputs || {}).find((value) => value && typeof value === "object" && typeof value.summary === "string");
+    const scan = this.findScan(outputs);
     const activity = Object.values(outputs || {}).find((value) => value && typeof value === "object" && value.byDay && value.byExtension);
-    const dayLines = Object.entries(activity?.byDayDetails || {}).sort(([left], [right]) => right.localeCompare(left)).map(([day, detail]) => {
-      const areas = Object.entries(detail.areas || {}).sort(([, left], [, right]) => right - left).slice(0, 4).map(([area, count]) => `${area} (${count})`).join(", ");
-      const fileNames = (detail.fileNames || []).join(", ");
-      return `### ${day}\n- ${detail.count} dosyada hareket\n- Çalışma alanları: ${areas || "Belirlenemedi"}\n- Öne çıkan dosyalar: ${fileNames || "Dosya adı bulunmadı"}`;
-    }).join("\n\n") || "- Dosya hareketi bulunmadı.";
-    const typeLines = Object.entries(activity?.byExtension || {}).sort(([, left], [, right]) => right - left).map(([extension, count]) => `- ${extension}: ${count}`).join("\n") || "- Dosya türü bulunmadı.";
-    const rootLines = Object.entries(activity?.byRoot || {}).sort(([, left], [, right]) => right - left).map(([root, count]) => `- ${root}: ${count} dosya`).join("\n") || "- Klasör hareketi bulunmadı.";
-    const coverageNote = activity?.maxFilesReached ? "\n\nNot: Güvenli dosya sınırına ulaşıldı; en yeni dosyalar raporlandı." : "";
+    const areas = Object.entries(scan.files.reduce((result, file) => {
+      const area = workArea(file);
+      result[area] ||= [];
+      result[area].push(file);
+      return result;
+    }, {})).sort(([, left], [, right]) => right.length - left.length);
+    const newCount = scan.files.filter((file) => isNewFile(file, scan)).length;
+    const updatedCount = scan.files.length - newCount;
+    const areaLines = areas.slice(0, 5).map(([area, files]) => `- **${area}:** ${purposeForFiles(files)} (${files.length} dosya)`).join("\n") || "- Bu hafta kayda değer bir dosya hareketi bulunmadı.";
+    const busiestDay = Object.entries(activity?.byDay || {}).sort(([, left], [, right]) => right - left)[0];
+    const attention = activity?.maxFilesReached
+      ? "Dosya sayısı güvenli inceleme sınırına ulaştı. En yeni dosyalar rapora alındı."
+      : activity?.inaccessibleCount > 0
+        ? `${activity.inaccessibleCount} korumalı klasör okunamadı; diğer klasörler başarıyla incelendi.`
+        : "İnceleme sırasında kullanıcı müdahalesi gerektiren bir sorun görülmedi.";
     return [
       `# ${parameters.reportTitle || "OtoFlow Otomasyon Raporu"}`,
       `\nOluşturulma: ${new Date().toLocaleString("tr-TR")}`,
-      `\n## Genel Bakış\n${activity?.totalFiles || 0} yeni veya değişen dosya incelendi.${coverageNote}`,
-      `\n## Dosya Özetleri\n${summaryOutput?.summary || "Özetlenecek dosya bulunmadı."}`,
-      `\n## Günlere Göre Aktivite\n${dayLines}`,
-      `\n## Klasörlere Göre Aktivite\n${rootLines}`,
-      `\n## Dosya Türleri\n${typeLines}`
+      "\nBu rapor, son bir haftadaki çalışmalarınızı teknik ayrıntıya girmeden özetler.",
+      `\n## Kısa Sonuç\nToplam ${scan.files.length} dosya incelendi. ${newCount} yeni dosya eklendi, ${updatedCount} dosya güncellendi. ${Object.keys(activity?.byDay || {}).length} farklı günde çalışma kaydı bulundu.`,
+      busiestDay ? `\nEn yoğun gün ${friendlyDate(busiestDay[0])} oldu; o gün ${busiestDay[1]} dosyada işlem yapıldı.` : "",
+      `\n## Bu Hafta Neler Yapıldı?\n${areaLines}`,
+      `\n## Dikkat Gerekenler\n${attention}`,
+      "\n## Daha Fazla Ayrıntı\nHangi dosyalarda işlem yapıldığını görmek için OtoFlow sonuç ekranındaki **Ayrıntılı Rapor** seçeneğini açabilirsiniz."
+    ].join("\n");
+  }
+
+  composeDetailedReport(outputs, parameters) {
+    const scan = this.findScan(outputs);
+    const summaryOutput = Object.values(outputs || {}).find((value) => value && typeof value === "object" && typeof value.summary === "string");
+    const areas = Object.entries(scan.files.reduce((result, file) => {
+      const area = workArea(file);
+      result[area] ||= [];
+      result[area].push(file);
+      return result;
+    }, {})).sort(([, left], [, right]) => right.length - left.length);
+    const areaSections = areas.map(([area, files]) => {
+      const newCount = files.filter((file) => isNewFile(file, scan)).length;
+      const updatedCount = files.length - newCount;
+      const fileLines = files
+        .sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))
+        .map((file) => {
+          const change = isNewFile(file, scan) ? "Yeni eklendi" : "Güncellendi";
+          const type = fileTypeLabels[fileType(file)];
+          const result = fileResult(file, change);
+          return `- **${file.name}** — ${change}. ${type}. ${result}`;
+        }).join("\n");
+      return `## ${area}\n**Problem veya istek:** Dosya hareketlerine göre ${purposeForFiles(files).toLocaleLowerCase("tr-TR")}\n\n**Yapılan işlem:** ${newCount} yeni dosya eklendi, ${updatedCount} dosya güncellendi.\n\n**Sonuç:** Bu çalışma alanında toplam ${files.length} dosyadaki işlem kayda alındı ve aşağıda sade biçimde açıklandı.\n\n### İşlem Yapılan Dosyalar\n${fileLines}`;
+    }).join("\n\n");
+    const contentReview = typeof summaryOutput?.count === "number" && summaryOutput.count < scan.files.length
+      ? ` İçeriği okunabilen ${summaryOutput.count} dosya ayrıca incelendi.`
+      : "";
+    return [
+      `# ${parameters.detailReportTitle || "Haftalık Çalışma Ayrıntıları"}`,
+      `\nOluşturulma: ${new Date().toLocaleString("tr-TR")}`,
+      "\nBu rapor kod veya teknik içerik göstermez. Dosyalarda görülen hareketleri günlük bilgisayar kullanım diliyle açıklar.",
+      `\n## Genel Değerlendirme\nToplam ${scan.files.length} yeni veya değişen dosya ayrıntılandırıldı.${contentReview}\n\n${summaryOutput?.summary || "Dosya hareketleri çalışma alanlarına göre gruplandı."}`,
+      `\n${areaSections || "Bu dönemde ayrıntılandırılacak bir dosya hareketi bulunmadı."}`
     ].join("\n");
   }
 
@@ -245,7 +377,18 @@ export class FileExecutor {
     const isPdf = path.extname(reportPath).toLowerCase() === ".pdf";
     const bytes = isPdf ? await writePdfReport(report, reportPath) : Buffer.byteLength(report);
     if (!isPdf) await fs.writeFile(reportPath, report, "utf8");
-    return { reportPath, bytes, format: isPdf ? "pdf" : "markdown", savedAt: new Date().toISOString() };
+    let detailReportPath;
+    let detailBytes;
+    if (parameters.includeDetailedReport !== false) {
+      detailReportPath = this.assertAllowed(parameters.detailReportPath || deriveDetailReportPath(reportPath));
+      const detailReport = this.composeDetailedReport(outputs, parameters);
+      await fs.mkdir(path.dirname(detailReportPath), { recursive: true });
+      detailBytes = path.extname(detailReportPath).toLowerCase() === ".pdf"
+        ? await writePdfReport(detailReport, detailReportPath)
+        : Buffer.byteLength(detailReport);
+      if (path.extname(detailReportPath).toLowerCase() !== ".pdf") await fs.writeFile(detailReportPath, detailReport, "utf8");
+    }
+    return { reportPath, bytes, detailReportPath, detailBytes, format: isPdf ? "pdf" : "markdown", savedAt: new Date().toISOString() };
   }
 
   async execute(step, outputs) {

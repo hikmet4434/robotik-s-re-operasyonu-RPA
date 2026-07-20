@@ -95,8 +95,18 @@ const report = await fs.readFile(reportPath);
 assert.equal(report.subarray(0, 5).toString("ascii"), "%PDF-");
 assert.ok(report.length > 5_000);
 assert.equal(completed.outputs.savedReport.reportPath, reportPath);
+assert.ok(completed.outputs.savedReport.detailReportPath.endsWith("-ayrintilar.pdf"));
+const detailReport = await fs.readFile(completed.outputs.savedReport.detailReportPath);
+assert.equal(detailReport.subarray(0, 5).toString("ascii"), "%PDF-");
+const summaryDownload = await fetch(`${apiBase}/api/jobs/${job.id}/reports/summary`);
+assert.equal(summaryDownload.ok, true);
+assert.match(summaryDownload.headers.get("content-type") || "", /application\/pdf/);
+const detailDownload = await fetch(`${apiBase}/api/jobs/${job.id}/reports/details`);
+assert.equal(detailDownload.ok, true);
+assert.match(detailDownload.headers.get("content-type") || "", /application\/pdf/);
 assert.equal(completed.outputs._result.status, "succeeded");
 assert.equal(completed.outputs._result.reportPath, reportPath);
+assert.equal(completed.outputs._result.detailReportPath, completed.outputs.savedReport.detailReportPath);
 assert.match(completed.outputs._result.reportContent, /Haftalık Dosya ve Çalışma Özeti/);
 
 if ((apiBase.includes("localhost") || apiBase.includes("127.0.0.1")) && process.env.OTOFLOW_TEST_KEEP_DATA !== "true") {

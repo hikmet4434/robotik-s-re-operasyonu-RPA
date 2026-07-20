@@ -29,18 +29,28 @@ try {
   const outputs = { weeklyFiles: scan };
   const summaries = await executor.summarizeFiles(outputs, { prompt: "Özetle" });
   const activity = executor.summarizeActivity(outputs);
-  const report = executor.composeReport({ ...outputs, fileSummaries: summaries, weeklyActivity: activity }, { reportTitle: "Haftalık Dosya ve Çalışma Özeti" });
-  const saved = await executor.saveReport({ weeklyReport: report }, { reportPath });
+  const reportOutputs = { ...outputs, fileSummaries: summaries, weeklyActivity: activity };
+  const report = executor.composeReport(reportOutputs, { reportTitle: "Haftalık Dosya ve Çalışma Özeti" });
+  const detailReport = executor.composeDetailedReport(reportOutputs, { detailReportTitle: "Haftalık Çalışma Ayrıntıları" });
+  const saved = await executor.saveReport({ ...reportOutputs, weeklyReport: report }, { reportPath });
 
   assert.equal(activity.byRoot.Documents, 1);
   assert.equal(activity.byRoot.Downloads, 1);
   assert.equal(Object.values(activity.byDayDetails)[0].count, 2);
-  assert.match(report, /Klasörlere Göre Aktivite/);
+  assert.doesNotMatch(report, /notlar\.md/);
+  assert.match(report, /Kısa Sonuç/);
+  assert.match(detailReport, /Problem veya istek/);
+  assert.match(detailReport, /Yapılan işlem/);
+  assert.match(detailReport, /Sonuç/);
+  assert.match(detailReport, /notlar\.md/);
   assert.equal(saved.reportPath, reportPath);
   assert.equal(saved.format, "pdf");
   const pdf = await fs.readFile(reportPath);
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
   assert.ok(pdf.length > 5_000);
+  assert.ok(saved.detailReportPath.endsWith("-ayrintilar.pdf"));
+  const detailPdf = await fs.readFile(saved.detailReportPath);
+  assert.equal(detailPdf.subarray(0, 5).toString("ascii"), "%PDF-");
 } finally {
   await fs.rm(base, { recursive: true, force: true });
 }

@@ -1179,6 +1179,7 @@ function buildCompletedJobResult(job: Job, workflow: Workflow) {
   const fileCount = Array.isArray(scan?.files) ? scan.files.length : typeof activity?.totalFiles === "number" ? activity.totalFiles : undefined;
   const dayCount = activity?.byDay && typeof activity.byDay === "object" ? Object.keys(activity.byDay).length : undefined;
   const reportPath = typeof saved?.reportPath === "string" ? saved.reportPath : undefined;
+  const detailReportPath = typeof saved?.detailReportPath === "string" ? saved.detailReportPath : undefined;
 
   return {
     status: "succeeded",
@@ -1192,12 +1193,14 @@ function buildCompletedJobResult(job: Job, workflow: Workflow) {
       { label: "Tamamlanan adım", value: `${job.totalSteps}/${job.totalSteps}` }
     ].filter(Boolean),
     details: [
-      reportPath ? `Rapor konumu: ${reportPath}` : undefined,
+      reportPath ? "Kısa ve sade PDF raporu hazırlandı." : undefined,
+      detailReportPath ? "Dosya bazındaki açıklamalar ayrı bir ayrıntılı PDF olarak hazırlandı." : undefined,
       scan?.maxFilesReached ? "Güvenli tarama sınırına ulaşıldı; en yeni dosyalar rapora alındı." : undefined,
       typeof activity?.inaccessibleCount === "number" && activity.inaccessibleCount > 0 ? `${activity.inaccessibleCount} korumalı klasör atlandı.` : undefined
     ].filter(Boolean),
     reportContent: typeof reportContent === "string" ? reportContent : undefined,
     reportPath,
+    detailReportPath,
     generatedAt: job.completedAt,
     source: "OtoFlow Bilgisayar Ajanı"
   };

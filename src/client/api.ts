@@ -91,6 +91,7 @@ export const api = {
     request<AiAutomationPlan>("/api/ai/automation-plan", { method: "POST", body: JSON.stringify(body) }),
   createAiWorkflow: (body: AiAutomationPlan) => request<Workflow>("/api/ai/workflows", { method: "POST", body: JSON.stringify(body) }),
   jobs: () => request<Array<Job & { logs: JobRunLog[]; workflow?: Workflow }>>("/api/jobs"),
+  jobReportUrl: (id: string, kind: "summary" | "details") => `/api/jobs/${encodeURIComponent(id)}/reports/${kind}`,
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }),
   retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: "POST", body: "{}" }),
   approvals: () => request<ApprovalTask[]>("/api/approvals"),

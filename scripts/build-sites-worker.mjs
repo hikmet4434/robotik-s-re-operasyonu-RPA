@@ -262,6 +262,7 @@ function buildAiFilePlan(body) {
   const directoryPaths = Array.isArray(body.directoryPaths) && body.directoryPaths.length ? body.directoryPaths : [body.directoryPath || "~/Documents", "~/Downloads", "~/Desktop"];
   const directoryPath = directoryPaths[0];
   const reportPath = body.reportPath || "~/Documents/OtoFlow Raporlari/haftalik-dosya-raporu.pdf";
+  const detailReportPath = reportPath.replace(/\.pdf$/i, "-ayrintilar.pdf");
   const schedule = {
     enabled: Boolean(body.cron),
     cron: body.cron || "0 9 * * 1",
@@ -284,7 +285,7 @@ function buildAiFilePlan(body) {
       step("files.summarize", "Dosya iceriklerini ozetle", "Metin tabanli dosyalari icerigiyle, diger dosyalari metadata ile ozetler.", "medium", { outputKey: "fileSummaries", prompt: "Dosyalari kisa Turkce maddelerle ozetle." }),
       step("activity.summarize", "Haftalik calismayi gunlere ayir", "Dosya hareketlerini gun ve dosya turune gore gruplar.", "low", { outputKey: "weeklyActivity" }),
       step("report.compose", "Haftalik raporu hazirla", "Dosya ve aktivite ozetini tek raporda birlestirir.", "low", { outputKey: "weeklyReport", reportTitle: "Haftalik Dosya ve Calisma Ozeti" }),
-      step("report.save", "Raporu bilgisayara kaydet", "Raporu izin verilen hedefe kaydeder.", body.approvalAtEnd ? "medium" : "low", { reportPath, outputKey: "savedReport" }, Boolean(body.approvalAtEnd)),
+      step("report.save", "Raporu bilgisayara kaydet", "Kısa raporu ve isteğe bağlı ayrıntıları izin verilen hedefe kaydeder.", body.approvalAtEnd ? "medium" : "low", { reportPath, detailReportPath, includeDetailedReport: true, outputKey: "savedReport" }, Boolean(body.approvalAtEnd)),
     ],
     assumptions: ["Taranacak klasorler: " + directoryPaths.join(", "), "Rapor hedefi: " + reportPath, "Gercek dosya islemleri ayni sunucuya bagli yerel ajan tarafindan calistirilir."],
     providerLabel: "Yerel guvenli planlayici",

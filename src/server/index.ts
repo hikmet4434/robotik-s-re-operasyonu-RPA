@@ -146,12 +146,15 @@ const workflowStepSchema = z.object({
     , directoryPath: z.string().max(2048).optional()
     , directoryPaths: z.array(z.string().max(2048)).min(1).max(10).optional()
     , reportPath: z.string().max(2048).optional()
+    , detailReportPath: z.string().max(2048).optional()
+    , includeDetailedReport: z.boolean().optional()
     , lookbackDays: z.number().int().min(1).max(365).optional()
     , extensions: z.array(z.string().max(20)).max(50).optional()
     , recursive: z.boolean().optional()
     , maxFiles: z.number().int().min(1).max(5000).optional()
     , prompt: z.string().max(4000).optional()
     , reportTitle: z.string().max(240).optional()
+    , detailReportTitle: z.string().max(240).optional()
   }).optional()
 });
 
@@ -584,6 +587,25 @@ app.get("/api/jobs/:id", (req, res) => {
     return;
   }
   res.json(job);
+});
+
+app.get("/api/jobs/:id/reports/:kind", (req, res) => {
+  const job = listJobs().find((item) => item.id === req.params.id);
+  if (!job) {
+    res.status(404).json({ error: "Çalışma sonucu bulunamadı." });
+    return;
+  }
+  const saved = job.outputs?.savedReport as Record<string, unknown> | undefined;
+  const reportPath = saved && typeof saved === "object" && !Array.isArray(saved)
+    ? req.params.kind === "details" ? saved.detailReportPath : saved.reportPath
+    : undefined;
+  if (typeof reportPath !== "string" || path.extname(reportPath).toLowerCase() !== ".pdf" || !fs.existsSync(reportPath)) {
+    res.status(404).json({ error: "PDF raporu bu bilgisayarda bulunamadı." });
+    return;
+  }
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${path.basename(reportPath).replace(/[^a-zA-Z0-9._-]/g, "-")}"`);
+  res.sendFile(path.resolve(reportPath));
 });
 
 app.post("/api/jobs/:id/cancel", (req, res) => {

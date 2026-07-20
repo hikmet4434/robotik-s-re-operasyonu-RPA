@@ -973,6 +973,7 @@ type FriendlyJobResult = {
   source?: string;
   reportContent?: string;
   reportPath?: string;
+  detailReportPath?: string;
 };
 
 function friendlyJobResult(job: Job): FriendlyJobResult | null {
@@ -1007,7 +1008,18 @@ function JobResultPanel({ job, onDownload }: { job: Job; onDownload: () => void 
           <div className={`px-5 py-4 text-sm leading-6 ${result.status === "agent_required" || job.status === "failed" ? "bg-red-50 text-red-900" : "bg-teal-50 text-teal-950"}`}>{result.summary}</div>
           {result.metrics?.length ? <div className="grid border-y border-line sm:grid-cols-3">{result.metrics.map((metric) => <div key={metric.label} className="border-b border-line px-5 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"><div className="text-xs font-semibold uppercase text-muted">{metric.label}</div><div className="mt-1 text-xl font-bold text-ink">{metric.value}</div></div>)}</div> : null}
           {result.details?.length ? <div className="px-5 py-4"><h3 className="text-sm font-bold">Üretilen sonuçlar</h3><div className="mt-3 divide-y divide-line border-y border-line">{result.details.filter(Boolean).map((detail, index) => <div key={`${index}-${detail}`} className="py-3 text-sm leading-6 text-ink">{detail}</div>)}</div></div> : null}
-          {result.reportContent ? <div className="border-t border-line px-5 py-4"><h3 className="text-sm font-bold">Hazırlanan rapor</h3>{result.reportPath ? <div className="mt-1 break-all text-xs text-muted">{result.reportPath}</div> : null}<pre className="mt-3 max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-sm leading-6 text-ink ring-1 ring-line">{result.reportContent}</pre></div> : null}
+          {result.reportContent ? <div className="border-t border-line px-5 py-4">
+            <h3 className="text-sm font-bold">Rapor seçenekleri</h3>
+            <p className="muted mt-1">Önce kısa özeti açın. Dosya bazında bilgi gerektiğinde ayrıntılı rapora geçin.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {result.reportPath ? <a className="button-primary" href={api.jobReportUrl(job.id, "summary")} target="_blank" rel="noreferrer"><FileSearch size={16} />Kısa PDF'i Aç</a> : null}
+              {result.detailReportPath ? <a className="button-secondary" href={api.jobReportUrl(job.id, "details")} target="_blank" rel="noreferrer"><FileSearch size={16} />Ayrıntılı PDF'i Aç</a> : null}
+            </div>
+            <details className="mt-4 rounded-md bg-slate-50 p-4 ring-1 ring-line">
+              <summary className="cursor-pointer text-sm font-semibold">Kısa özeti burada göster</summary>
+              <pre className="mt-3 max-h-[420px] overflow-auto whitespace-pre-wrap font-sans text-sm leading-6 text-ink">{result.reportContent}</pre>
+            </details>
+          </div> : null}
           {result.generatedAt ? <div className="border-t border-line px-5 py-3 text-xs text-muted">Tamamlanma: {formatDate(result.generatedAt)}</div> : null}
         </div>
       ) : (

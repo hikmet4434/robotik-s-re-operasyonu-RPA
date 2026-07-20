@@ -285,7 +285,7 @@ export function normalizeGeneratedPlan(raw: unknown, input: AiPlanRequest): Gene
 
 const allowedParameterKeys = new Set([
   "url", "selector", "value", "option", "appName", "x", "y", "keys", "timeoutMs", "credentialField",
-  "outputKey", "directoryPath", "directoryPaths", "reportPath", "lookbackDays", "extensions", "recursive", "maxFiles", "prompt", "reportTitle"
+  "outputKey", "directoryPath", "directoryPaths", "reportPath", "detailReportPath", "includeDetailedReport", "lookbackDays", "extensions", "recursive", "maxFiles", "prompt", "reportTitle", "detailReportTitle"
 ]);
 
 function stepId() {
@@ -359,6 +359,8 @@ function requestedDirectoryPaths(input: AiPlanRequest) {
 function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
   const directoryPaths = requestedDirectoryPaths(input);
   const reportPath = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "haftalik-dosya-raporu.pdf");
+  const extension = path.extname(reportPath);
+  const detailReportPath = extension ? `${reportPath.slice(0, -extension.length)}-ayrintilar${extension}` : `${reportPath}-ayrintilar.pdf`;
   const steps: WorkflowStep[] = [
     {
       id: stepId(), type: "files.scan", title: "Yeni ve değişen dosyaları tara",
@@ -388,7 +390,7 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
       description: "Hazırlanan raporu izin verilen hedef klasöre kaydeder.",
       requiresApproval: Boolean(input.approvalAtEnd), riskLevel: input.approvalAtEnd ? "medium" : "low",
       approvalPrompt: input.approvalAtEnd ? "Haftalık rapor bilgisayara kaydedilsin mi?" : undefined,
-      parameters: { reportPath, outputKey: "savedReport" }
+      parameters: { reportPath, detailReportPath, includeDetailedReport: true, outputKey: "savedReport" }
     }
   ];
 
@@ -407,7 +409,8 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
     steps,
     assumptions: [
       `Taranacak klasörler: ${directoryPaths.join(", ")}`,
-      `Rapor hedefi: ${reportPath}`,
+      `Kısa rapor hedefi: ${reportPath}`,
+      `İsteğe bağlı ayrıntılı rapor hedefi: ${detailReportPath}`,
       "Metin dışı dosyalarda içerik yerine dosya adı, boyut ve değişiklik zamanı raporlanır."
     ],
     providerLabel: "Yerel güvenli planlayıcı"
@@ -417,6 +420,8 @@ function weeklyFilePlan(input: AiPlanRequest): AiAutomationPlan {
 function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
   const directoryPaths = requestedDirectoryPaths(input);
   const defaultReport = input.reportPath || path.join(os.homedir(), "Documents", "OtoFlow Raporları", "otomasyon-raporu.pdf");
+  const extension = path.extname(defaultReport);
+  const defaultDetailReport = extension ? `${defaultReport.slice(0, -extension.length)}-ayrintilar${extension}` : `${defaultReport}-ayrintilar.pdf`;
   plan.schedule = {
     enabled: Boolean(input.cron),
     cron: input.cron || "0 9 * * 1",
@@ -430,7 +435,11 @@ function applyRuntimeOverrides(plan: AiAutomationPlan, input: AiPlanRequest) {
       parameters.directoryPath = directoryPaths[0];
       parameters.directoryPaths = directoryPaths;
     }
-    if (step.type === "report.save") parameters.reportPath = defaultReport;
+    if (step.type === "report.save") {
+      parameters.reportPath = defaultReport;
+      parameters.detailReportPath = defaultDetailReport;
+      parameters.includeDetailedReport = true;
+    }
     const externalAction = ["email.send_after_approval", "webhook.emit"].includes(step.type) || step.riskLevel === "critical";
     return {
       ...step,
@@ -497,10 +506,14 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
 
 export function buildHeuristicSummary(files: Array<{ name: string; relativePath: string; size: number; modifiedAt: string; excerpt?: string }>) {
   if (files.length === 0) return "Bu dönemde yeni veya değişen dosya bulunmadı.";
-  return files.map((file) => {
-    const excerpt = file.excerpt?.replace(/\s+/g, " ").trim().slice(0, 240);
-    return `- **${file.name}** (${file.relativePath}): ${excerpt || `${file.size} bayt, son değişiklik ${file.modifiedAt}`}`;
-  }).join("\n");
+  const areas = new Map<string, number>();
+  for (const file of files) {
+    const parts = file.relativePath.split(/[\\/]/).filter(Boolean);
+    const area = parts.length > 2 ? parts[1] : ({ Documents: "Belgeler", Downloads: "İndirilenler", Desktop: "Masaüstü" }[parts[0]] || parts[0] || "Diğer");
+    areas.set(area, (areas.get(area) || 0) + 1);
+  }
+  const leading = [...areas.entries()].sort((left, right) => right[1] - left[1]).slice(0, 5).map(([area, count]) => `${area} (${count} dosya)`).join(", ");
+  return `Çalışmanın yoğunlaştığı alanlar: ${leading}. Teknik içerikler rapora alınmadı.`;
 }
 
 export async function summarizeFilesWithLlm(
@@ -516,7 +529,7 @@ export async function summarizeFilesWithLlm(
     const provider = createOpenAICompatible({ name: `otoflow-summary-${endpoint.provider}`, baseURL: endpoint.baseUrl, apiKey: endpoint.apiKey });
     const { text } = await generateText({
       model: provider(endpoint.model),
-      system: "Dosya içeriklerinden kısa, somut ve Türkçe haftalık çalışma özeti üret. Gizli bilgi tahmin etme. Her dosyayı ayrı madde yap.",
+      system: "Kod bilmeyen bir bilgisayar kullanıcısı için kısa, somut ve Türkçe haftalık çalışma özeti üret. Kaynak kodu, ham dosya içeriğini, teknik terimleri, dosya yollarını, boyutları ve tarih kodlarını yanıta koyma. Kanıt varsa ihtiyaç veya problemi, yapılan işi ve sonucu sade dille açıkla; kanıt yoksa tahmin yürütme. Dosyaları tek tek sıralamak yerine çalışma alanlarına göre en fazla 5 madde yaz.",
       prompt: `${prompt || "Yeni ve değişen dosyaları özetle."}\n\n${JSON.stringify(source)}`
     });
     if (!text.trim()) throw new Error("Model boş yanıt verdi.");
