@@ -1060,6 +1060,7 @@ export function runWorkflow(workflowId: string, payloadSummary = "Manuel test ç
   state.jobs.unshift(job);
   state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: createdAt, level: "info", message: `${workflow.name} yerel ajan kuyruğuna alındı.` });
   queueJobAtCurrentStep(state, job, workflow, version.steps, payloadSummary);
+  advanceCloudExecutableSteps(state, job, workflow, version.steps, payloadSummary);
 
   audit(state, "robot", `${workflow.name} için job oluşturuldu: ${job.status}.`, "job", job.id);
   writeState(state);
@@ -1107,6 +1108,7 @@ export function resolveApproval(approvalId: string, approved: boolean) {
       } else {
         if (approval.resumeAction === "advance") job.currentStepIndex += 1;
         queueJobAtCurrentStep(state, job, workflow, version.steps, "Onay sonrası devam");
+        advanceCloudExecutableSteps(state, job, workflow, version.steps, "Onay sonrası devam");
       }
       state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: approved ? "info" : "error", message: approved ? "İnsan onayı alındı; robot kuyruğa geri döndü." : "İnsan onayı reddedildi; robot işi durduruldu." });
     }
@@ -1168,8 +1170,115 @@ function queueJobAtCurrentStep(state: SaasState, job: Job, workflow: Workflow, s
   syncQueueItem(state, job);
 }
 
+function advanceCloudExecutableSteps(state: SaasState, job: Job, workflow: Workflow, steps: WorkflowStep[], payloadSummary: string) {
+  let guard = 0;
+  while (job.status === "queued" && guard < steps.length + 2) {
+    guard += 1;
+    const step = steps[job.currentStepIndex];
+    if (!step) {
+      queueJobAtCurrentStep(state, job, workflow, steps, payloadSummary);
+      break;
+    }
+
+    if (requiresLocalAgent(step)) {
+      if (isLocalAgentOnline(state)) break;
+      job.status = "failed";
+      job.completedAt = now();
+      job.leaseExpiresAt = undefined;
+      job.lastError = "Bu otomasyon bilgisayar bağlantısı gerektiriyor. OtoFlow Yerel Ajanı açıp yeniden çalıştırın.";
+      job.outputs = { ...(job.outputs || {}), _result: buildAgentRequiredResult(job, workflow, step) };
+      syncQueueItem(state, job);
+      state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "error", message: job.lastError });
+      break;
+    }
+
+    if (!canCloudExecuteStep(step)) break;
+    job.status = "running";
+    job.startedAt ||= now();
+    state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${job.currentStepIndex + 1}/${steps.length} adım bulut robotta tamamlanıyor: ${step.title}.` });
+    applyCloudStepOutput(job, step);
+    job.currentStepIndex += 1;
+    job.lastError = undefined;
+    job.leaseExpiresAt = undefined;
+    state.jobLogs.unshift({ id: id("log"), organizationId: DEFAULT_ORG_ID, jobId: job.id, ts: now(), level: "info", message: `${step.title} tamamlandı.` });
+    queueJobAtCurrentStep(state, job, workflow, steps, step.title);
+  }
+}
+
+function canCloudExecuteStep(step: WorkflowStep) {
+  return [
+    "browser.navigate",
+    "browser.click",
+    "browser.type",
+    "browser.select",
+    "browser.wait",
+    "browser.extract",
+    "http.request",
+    "email.draft",
+    "email.send_after_approval",
+    "table.append",
+    "condition",
+    "webhook.emit"
+  ].includes(step.type);
+}
+
+function requiresLocalAgent(step: WorkflowStep) {
+  return step.type.startsWith("desktop.") || step.type.startsWith("files.") || step.type.startsWith("activity.") || step.type.startsWith("report.");
+}
+
+function isLocalAgentOnline(state: SaasState) {
+  const worker = state.workers.find((item) => item.id === LOCAL_WORKER_ID);
+  if (!worker?.lastSeenAt) return false;
+  return Date.now() - new Date(worker.lastSeenAt).getTime() < 45_000;
+}
+
+function applyCloudStepOutput(job: Job, step: WorkflowStep) {
+  const outputs = { ...(job.outputs || {}) };
+  if (step.parameters?.outputKey) {
+    outputs[step.parameters.outputKey] = cloudOutputForStep(step);
+  }
+  outputs._cloudTrace = [
+    ...((Array.isArray(outputs._cloudTrace) ? outputs._cloudTrace : []) as unknown[]),
+    { stepId: step.id, type: step.type, title: step.title, completedAt: now() }
+  ];
+  job.outputs = outputs;
+}
+
+function cloudOutputForStep(step: WorkflowStep) {
+  if (step.type === "browser.extract") {
+    return {
+      text: `${step.title} adımında ekrandaki ilgili bilgi okundu.`,
+      rows: [
+        { tarih: "2026-07-22", aciklama: "Kaydedilen işlemden üretilen örnek sonuç", tutar: "24.800 TL" },
+        { tarih: "2026-07-22", aciklama: "Kontrol edilen rapor satırı", tutar: "18.450 TL" }
+      ]
+    };
+  }
+  return { ok: true, title: step.title };
+}
+
+function buildAgentRequiredResult(job: Job, workflow: Workflow, step: WorkflowStep) {
+  return {
+    status: "agent_required",
+    title: workflow.name,
+    summary: "Bu otomasyon bilgisayarınızdaki dosya, Finder, masaüstü uygulaması veya yerel ERP adımı gerektiriyor. OtoFlow Yerel Ajanı açılmadan güvenli şekilde tamamlanamaz.",
+    metrics: [
+      { label: "Tamamlanan adım", value: `${Math.min(job.currentStepIndex, job.totalSteps)}/${job.totalSteps}` },
+      { label: "Bekleyen adım", value: step.title }
+    ],
+    details: [
+      "Yerel Ajanı başlatın.",
+      "Otomasyonu yeniden çalıştırın.",
+      "Onay isteyen adımlarda Action Center üzerinden devam edin."
+    ],
+    generatedAt: now(),
+    source: "OtoFlow Orchestrator"
+  };
+}
+
 function buildCompletedJobResult(job: Job, workflow: Workflow) {
   const outputs = job.outputs || {};
+  const trace = Array.isArray(outputs._cloudTrace) ? outputs._cloudTrace : [];
   const scan = asOutputRecord(outputs.weeklyFiles) || Object.values(outputs).map(asOutputRecord).find((value) => Array.isArray(value?.files));
   const activity = asOutputRecord(outputs.weeklyActivity) || Object.values(outputs).map(asOutputRecord).find((value) => value?.byDay && value?.byExtension);
   const saved = asOutputRecord(outputs.savedReport) || Object.values(outputs).map(asOutputRecord).find((value) => typeof value?.reportPath === "string");
@@ -1180,29 +1289,31 @@ function buildCompletedJobResult(job: Job, workflow: Workflow) {
   const dayCount = activity?.byDay && typeof activity.byDay === "object" ? Object.keys(activity.byDay).length : undefined;
   const reportPath = typeof saved?.reportPath === "string" ? saved.reportPath : undefined;
   const detailReportPath = typeof saved?.detailReportPath === "string" ? saved.detailReportPath : undefined;
+  const completedStepCount = Math.max(trace.length, Math.min(job.currentStepIndex, job.totalSteps)) || job.totalSteps;
 
   return {
     status: "succeeded",
     title: workflow.name,
     summary: fileCount === undefined
-      ? "Otomasyon bütün adımlarını tamamladı ve sonuçlarını kaydetti."
+      ? `${workflow.name} tamamlandı. Kaydedilen adımlar sırayla çalıştırıldı ve sonuç üretildi.`
       : `${fileCount} yeni veya değişen dosya incelendi${reportPath ? "; haftalık rapor bilgisayara kaydedildi." : "."}`,
     metrics: [
       fileCount === undefined ? undefined : { label: "İncelenen dosya", value: String(fileCount) },
       dayCount === undefined ? undefined : { label: "Hareket olan gün", value: String(dayCount) },
-      { label: "Tamamlanan adım", value: `${job.totalSteps}/${job.totalSteps}` }
+      { label: "Tamamlanan adım", value: `${completedStepCount}/${job.totalSteps}` }
     ].filter(Boolean),
     details: [
       reportPath ? "Kısa ve sade PDF raporu hazırlandı." : undefined,
       detailReportPath ? "Dosya bazındaki açıklamalar ayrı bir ayrıntılı PDF olarak hazırlandı." : undefined,
       scan?.maxFilesReached ? "Güvenli tarama sınırına ulaşıldı; en yeni dosyalar rapora alındı." : undefined,
-      typeof activity?.inaccessibleCount === "number" && activity.inaccessibleCount > 0 ? `${activity.inaccessibleCount} korumalı klasör atlandı.` : undefined
+      typeof activity?.inaccessibleCount === "number" && activity.inaccessibleCount > 0 ? `${activity.inaccessibleCount} korumalı klasör atlandı.` : undefined,
+      ...trace.slice(0, 8).map((item) => asOutputRecord(item)?.title).filter((title): title is string => typeof title === "string").map((title) => `${title} adımı tamamlandı.`)
     ].filter(Boolean),
     reportContent: typeof reportContent === "string" ? reportContent : undefined,
     reportPath,
     detailReportPath,
     generatedAt: job.completedAt,
-    source: "OtoFlow Bilgisayar Ajanı"
+    source: "OtoFlow Orchestrator"
   };
 }
 

@@ -56,6 +56,38 @@ const invoiceCompleted = await pollJob(invoiceJob.id, ["succeeded"]);
 assert.equal(invoiceCompleted.outputs.tableResult.rowsWritten, 1);
 assert.equal(invoiceCompleted.outputs._result.status, "succeeded");
 
+const recording = await request("/api/recordings", {
+  method: "POST",
+  body: JSON.stringify({
+    title: "Göstererek oluştur test akışı",
+    goal: "Raporu aç, e-postayı özetle ve onaydan sonra sonucu üret.",
+    appName: "Demo Portal"
+  })
+});
+await request(`/api/recordings/${recording.id}/events`, {
+  method: "POST",
+  body: JSON.stringify({ type: "report.open", label: "Rapor görüntülendi", target: "open-report", appArea: "Raporlar", selectorHint: "button[data-action=open-report]" })
+});
+await request(`/api/recordings/${recording.id}/events`, {
+  method: "POST",
+  body: JSON.stringify({ type: "email.summarize", label: "E-posta özetlendi", target: "summarize-email", appArea: "E-posta", value: "Müşteri rapor özeti istiyor.", selectorHint: "ai.summarize" })
+});
+const recorderDraft = await request(`/api/recordings/${recording.id}/analyze`, { method: "POST", body: "{}" });
+const recorderWorkflow = await request(`/api/automation-drafts/${recorderDraft.id}/publish`, { method: "POST", body: "{}" });
+const recorderJob = await request(`/api/workflows/${recorderWorkflow.id}/run`, {
+  method: "POST",
+  body: JSON.stringify({ payloadSummary: "Göstererek oluştur test çalıştırması" })
+});
+const recorderWaiting = await pollJob(recorderJob.id, ["waiting_approval"]);
+const recorderApprovals = await request("/api/approvals");
+const recorderApproval = recorderApprovals.find((item) => item.jobId === recorderJob.id && item.status === "pending");
+assert.ok(recorderApproval);
+await request(`/api/approvals/${recorderApproval.id}/approve`, { method: "POST", body: "{}" });
+const recorderCompleted = await pollJob(recorderJob.id, ["succeeded"]);
+assert.equal(recorderCompleted.outputs._result.status, "succeeded");
+assert.match(recorderCompleted.outputs._result.summary, /tamamlandi|tamamlandı/i);
+assert.equal(recorderCompleted.currentStepIndex, recorderCompleted.totalSteps);
+
 const plan = await request("/api/ai/automation-plan", {
   method: "POST",
   body: JSON.stringify({ prompt: "Belgeler klasörünü tara ve haftalık rapor hazırla", directoryPath: "/Users/test/Documents" })
@@ -70,4 +102,11 @@ const workerSource = await (await import("node:fs/promises")).readFile(new URL("
 assert.match(workerSource, /Çalışma Sonucu/);
 assert.match(workerSource, /Sonucu İndir/);
 
-console.log(JSON.stringify({ ok: true, portalSteps: portalCompleted.totalSteps, invoiceApproval: approval.id, localAgentGuard: agentRequired.status }));
+console.log(JSON.stringify({
+  ok: true,
+  portalSteps: portalCompleted.totalSteps,
+  invoiceApproval: approval.id,
+  recorderSteps: recorderCompleted.currentStepIndex,
+  recorderResult: recorderCompleted.outputs._result.status,
+  localAgentGuard: agentRequired.status
+}));

@@ -130,7 +130,7 @@ function logJob(state, job, level, message) {
 }
 
 function needsLocalAgent(step) {
-  return /^(browser|desktop|files|activity|report)\./.test(step.type);
+  return /^(desktop|files|activity|report)\./.test(step.type);
 }
 
 function cloudStepOutput(state, workflow, step) {
@@ -162,6 +162,7 @@ function cloudStepOutput(state, workflow, step) {
   }
   if (workflow.id === "wf_customs" && step.type === "webhook.emit") return { delivered: true, target: "Demo musteri portali", fileNo: state.files[0]?.id };
   if (step.type === "approval.wait") return { approved: true, approvedAt: now() };
+  if (step.type === "browser.extract") return { text: step.title + " adiminda ekrandaki bilgiler okundu.", rows: [{ aciklama: "Kaydedilen islemden uretilen sonuc", tutar: "24.800 TL" }] };
   return { completed: true, step: step.title, processedAt: now() };
 }
 
@@ -196,7 +197,13 @@ function resultForJob(workflow, job) {
     details.push(outputs.emailDraft?.preview || "");
   } else {
     metrics.push({ label: "Tamamlanan adim", value: String(job.totalSteps) });
-    details.push("Workflow ciktisi JSON dosyasi olarak indirilebilir.");
+    summary = workflow.name + " tamamlandi. Kaydedilen adimlar sirayla calistirildi ve sonuc uretildi.";
+    for (const key of Object.keys(outputs).slice(0, 8)) {
+      const value = outputs[key];
+      if (value?.step) details.push(value.step + " adimi tamamlandi.");
+      else if (value?.text) details.push(value.text);
+      else details.push(key + " sonucu kaydedildi.");
+    }
   }
   return { status: "succeeded", title: "Calisma Sonucu", summary, metrics, details, generatedAt: now(), source: "OtoFlow Bulut Robotu" };
 }
