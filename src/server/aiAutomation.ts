@@ -2,8 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, Output } from "ai";
 import { z } from "zod";
 import type { AiAutomationPlan, AiSettings, WorkflowStep, WorkflowStepType } from "../shared/saasTypes";
 
@@ -68,6 +66,14 @@ type GeneratedPlan = z.infer<typeof generatedPlanSchema>;
 
 const allowedStepTypeSet = new Set<string>(allowedStepTypes);
 const planWrapperKeys = ["plan", "workflow", "automation", "result", "data", "output", "response"];
+
+async function loadAiGeneration() {
+  const [{ createOpenAICompatible }, { generateText, Output }] = await Promise.all([
+    import("@ai-sdk/openai-compatible"),
+    import("ai")
+  ]);
+  return { createOpenAICompatible, generateText, Output };
+}
 
 function asRecord(value: unknown): JsonRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
@@ -455,6 +461,7 @@ export async function generateAutomationPlan(input: AiPlanRequest, settings: AiR
   if (settings.provider === "template") return weeklyFilePlan(input);
   const endpoints = resolveModelEndpoints(settings);
   if (endpoints.length === 0) throw new Error("Otomasyon planlayıcısı için geçerli bir LLM bağlantısı bulunamadı.");
+  const { createOpenAICompatible, generateText, Output } = await loadAiGeneration();
   const generated = await runWithModelEndpointFallback(endpoints, async (endpoint) => {
     const provider = createOpenAICompatible({
       name: `otoflow-${endpoint.provider}`,
@@ -542,6 +549,7 @@ export async function summarizeFilesWithLlm(
   if (files.length === 0 || settings.provider === "template") return buildHeuristicSummary(files);
   const endpoints = resolveModelEndpoints(settings);
   if (endpoints.length === 0) return buildHeuristicSummary(files);
+  const { createOpenAICompatible, generateText } = await loadAiGeneration();
   const source = files.slice(0, 80).map((file) => ({ ...file, excerpt: file.excerpt?.slice(0, 1800) }));
   const generated = await runWithModelEndpointFallback(endpoints, async (endpoint) => {
     const provider = createOpenAICompatible({ name: `otoflow-summary-${endpoint.provider}`, baseURL: endpoint.baseUrl, apiKey: endpoint.apiKey });
