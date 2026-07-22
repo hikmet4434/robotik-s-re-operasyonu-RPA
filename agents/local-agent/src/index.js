@@ -88,10 +88,14 @@ async function poll() {
 
 async function heartbeat() {
   try {
-    await apiRequest("/api/agent/heartbeat", { method: "POST", body: JSON.stringify({ name: `${os.hostname()} Yerel Ajan`, platform: `${process.platform}-${process.arch}` }) });
+    await sendHeartbeat();
   } catch (error) {
     if (process.env.OTOFLOW_DEBUG === "true") console.error(error instanceof Error ? error.message : error);
   }
+}
+
+async function sendHeartbeat() {
+  return apiRequest("/api/agent/heartbeat", { method: "POST", body: JSON.stringify({ name: `${os.hostname()} Yerel Ajan`, platform: `${process.platform}-${process.arch}` }) });
 }
 
 function startNativeRecording(recordingSessionId) {
@@ -188,7 +192,12 @@ function startServer() {
       return;
     }
     if (req.url === "/health") {
-      jsonResponse(res, 200, { ok: true, service: "OtoFlow Local Agent", apiBase, platform: process.platform, recording: Boolean(nativeRecorder) });
+      try {
+        await sendHeartbeat();
+        jsonResponse(res, 200, { ok: true, service: "OtoFlow Local Agent", apiBase, platform: process.platform, recording: Boolean(nativeRecorder), apiConnected: true });
+      } catch (error) {
+        jsonResponse(res, 200, { ok: true, service: "OtoFlow Local Agent", apiBase, platform: process.platform, recording: Boolean(nativeRecorder), apiConnected: false, apiError: error instanceof Error ? error.message : "Ana uygulamaya bağlanılamadı." });
+      }
       return;
     }
     try {
